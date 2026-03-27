@@ -16,6 +16,7 @@ dev = [
     "pytest-asyncio",
     "httpx",
     "ruff",
+    "mypy",
 ]
 
 [tool.ruff]
@@ -27,3 +28,8 @@ select = ["E", "F", "I"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true
