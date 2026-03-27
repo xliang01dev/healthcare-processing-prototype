@@ -720,11 +720,13 @@ rather than waiting for the next nightly batch.
 | `uv` | Fast resolver and virtual-env manager; replaces `pip` + `pip-tools`. Each service has its own `pyproject.toml`; the repo root holds the workspace definition. |
 | `pyproject.toml` | Declares `[project]` metadata and `[project.dependencies]` per service. Dev extras (`[project.optional-dependencies] dev = [...]`) hold test and lint tools. |
 
-### Typical `pyproject.toml` (one service)
+### `pyproject.toml` (single file at repo root)
+
+One `pyproject.toml` at the monorepo root covers all services. Services are not independently packaged — they share a single dependency set.
 
 ```toml
 [project]
-name = "ingestion-gateway"
+name = "learning-healthcare-processing"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
@@ -736,7 +738,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-asyncio", "httpx"]
+dev = ["pytest", "pytest-asyncio", "httpx", "ruff"]
 ```
 
 ### No ORM — asyncpg directly
