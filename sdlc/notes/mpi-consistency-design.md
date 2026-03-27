@@ -1,8 +1,14 @@
-# MPI Consistency and Scaling — Design Conclusions
+# MPI Consistency and Scaling — Design Exploration
+
+> **Note: This is a brainstorming and design exploration document, not an authoritative specification.**
+> `mvp-architecture.md` is the source of truth for what is built in the POC.
+> References to Redis, NATS, CMS attribution prefetch, and the reconciliation batch gate in this
+> document reflect design options that were explored — not decisions that are implemented.
+> Where this document contradicts `mvp-architecture.md`, the architecture document takes precedence.
 
 ## Context
 
-The Master Patient Index (MPI) resolves patient identities across three independent data sources (Source A, B, C) into a single `canonical_patient_id`. This document captures design decisions around consistency, availability, caching, and throughput for the MPI layer.
+The Master Patient Index (MPI) resolves patient identities across three independent data sources — Source A (Labs / LIS), Source B (Pharmacy / NCPDP), Source C (Health System / EHR) — into a single `canonical_patient_id`. This document captures design thinking around consistency, availability, caching, and throughput for the MPI layer.
 
 ---
 
@@ -12,7 +18,7 @@ The Medicare Beneficiary Identifier (MBI) is how you **find** a patient. The `ca
 
 ### 1. MBI is not always present
 
-MBI is present on Medicare claims and CMS-sourced data, but Source C (EHR) may not include it — clinic systems that predate MBI adoption or don't expose it in exports will send records with only a name, DOB, and internal medical record number. If `canonical_patient_id` = MBI, Source C records have no join key until MBI is resolved. A generated internal UUID lets the patient be registered immediately and the MBI association backfilled later.
+MBI is present on Medicare claims and CMS-sourced data, but Source C (Health System / EHR) may not include it — clinic systems that predate MBI adoption or don't expose it in exports will send records with only a name, DOB, and internal medical record number. If `canonical_patient_id` = MBI, Source C records have no join key until MBI is resolved. A generated internal UUID lets the patient be registered immediately and the MBI association backfilled later.
 
 ### 2. MBI can change
 
