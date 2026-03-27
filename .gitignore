@@ -73,3 +73,6 @@ logs/
 # Postgres init artifacts (generated — not source)
 *.dump
 *.sql.bak
+
+# Claude
+.claude
