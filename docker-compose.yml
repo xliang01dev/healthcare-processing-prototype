@@ -12,7 +12,11 @@ services:
       POSTGRES_PASSWORD: postgres
     volumes:
       - healthcare_postgres_data:/var/lib/postgresql/data
-      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/00_base.sql
+      - ./services/mpi/infra/init_tables.sql:/docker-entrypoint-initdb.d/01_mpi.sql
+      - ./services/reconciliation/infra/init_tables.sql:/docker-entrypoint-initdb.d/02_reconciliation.sql
+      - ./services/timeline/infra/init_tables.sql:/docker-entrypoint-initdb.d/03_timeline.sql
+      - ./services/patient-summary/infra/init_tables.sql:/docker-entrypoint-initdb.d/04_patient_summary.sql
     ports:
       - "5432:5432"
     healthcheck:
@@ -44,7 +48,7 @@ services:
   ingestion-gateway:
     build:
       context: .
-      dockerfile: services/ingestion-gateway/Dockerfile
+      dockerfile: services/ingestion-gateway/infra/Dockerfile
       args:
         INCLUDE_DEBUG: debugpy
     environment:
@@ -61,7 +65,7 @@ services:
   mpi:
     build:
       context: .
-      dockerfile: services/mpi/Dockerfile
+      dockerfile: services/mpi/infra/Dockerfile
       args:
         INCLUDE_DEBUG: debugpy
     environment:
@@ -87,7 +91,7 @@ services:
   reconciliation:
     build:
       context: .
-      dockerfile: services/reconciliation/Dockerfile
+      dockerfile: services/reconciliation/infra/Dockerfile
       args:
         INCLUDE_DEBUG: debugpy
     environment:
@@ -113,7 +117,7 @@ services:
   timeline:
     build:
       context: .
-      dockerfile: services/timeline/Dockerfile
+      dockerfile: services/timeline/infra/Dockerfile
       args:
         INCLUDE_DEBUG: debugpy
     environment:
@@ -139,7 +143,7 @@ services:
   patient-summary:
     build:
       context: .
-      dockerfile: services/patient-summary/Dockerfile
+      dockerfile: services/patient-summary/infra/Dockerfile
       args:
         INCLUDE_DEBUG: debugpy
     environment:
@@ -165,7 +169,7 @@ services:
   patient-api:
     build:
       context: .
-      dockerfile: services/patient-api/Dockerfile
+      dockerfile: services/patient-api/infra/Dockerfile
       args:
         INCLUDE_DEBUG: debugpy
     environment:
@@ -187,7 +191,7 @@ services:
   notification:
     build:
       context: .
-      dockerfile: services/notification/Dockerfile
+      dockerfile: services/notification/infra/Dockerfile
       args:
         INCLUDE_DEBUG: debugpy
     environment:
