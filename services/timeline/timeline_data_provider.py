@@ -21,7 +21,7 @@ class TimelineDataProvider(DataProvider):
         #   LIMIT $2 OFFSET $3;
         return []
 
-    async def upsert_pending_assessment(
+    async def upsert_pending_processing(
         self, canonical_patient_id: str, scheduled_after
     ) -> None:
         # TODO: INSERT INTO timeline.pending_processing
@@ -32,7 +32,7 @@ class TimelineDataProvider(DataProvider):
         #   Bumping scheduled_after resets the debounce window.
         pass
 
-    async def fetch_due_pending_assessments(self) -> list:
+    async def fetch_due_pending_processing(self) -> list:
         # TODO: SELECT * FROM timeline.pending_processing
         #   WHERE scheduled_after < NOW() AND status = 'pending';
         return []

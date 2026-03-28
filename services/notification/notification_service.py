@@ -3,4 +3,4 @@ class NotificationService:
         # TODO: Parse risk_tier from msg payload.
         # TODO: Route alert for High/Critical risk tier to console log or WEBHOOK_URL.
         # TODO: WEBHOOK_URL = os.getenv("WEBHOOK_URL") — placeholder for outbound webhook delivery.
-        print(f"[NotificationService] risk.computed received: {msg.data}")
+        print(f"[NotificationService] risk computed event received: {msg.data}")
