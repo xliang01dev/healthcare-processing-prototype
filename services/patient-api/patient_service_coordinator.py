@@ -22,14 +22,14 @@ class PatientServiceCoordinator:
     async def get_patient_recommendation(
         self, canonical_patient_id: str
     ) -> RecommendationResponse:
-        # TODO: Call LLM Summary service → CacheService first,
+        # TODO: Call Patient Summary service → CacheService first,
         #   fallback to patient_summary.recommendations ORDER BY generated_at DESC LIMIT 1.
         return RecommendationResponse()
 
     async def get_patient_recommendations(
         self, canonical_patient_id: str, page: int, page_size: int
     ) -> RecommendationsResponse:
-        # TODO: Call LLM Summary service → patient_summary.recommendations ORDER BY generated_at DESC.
+        # TODO: Call Patient Summary service → patient_summary.recommendations ORDER BY generated_at DESC.
         return RecommendationsResponse()
 
     async def get_patient_conflicts(
@@ -39,6 +39,6 @@ class PatientServiceCoordinator:
         return ConflictsResponse()
 
     async def refresh_recommendation(self, body: RecommendationRequest) -> dict:
-        # TODO: Call LLM Summary service to trigger agent session inference (mode='agent').
+        # TODO: Call Patient Summary service to trigger agent session inference (mode='agent').
         #   Only HTTP-triggered write path into patient_summary.recommendations.
         return {"stub": True}

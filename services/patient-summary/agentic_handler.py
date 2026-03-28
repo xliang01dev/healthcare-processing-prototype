@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from typing import AsyncIterator
 
 
-class AgentService(ABC):
+class AgenticHandler(ABC):
     @abstractmethod
     async def complete(self, prompt: str, context: dict) -> AsyncIterator[str]:
         ...
