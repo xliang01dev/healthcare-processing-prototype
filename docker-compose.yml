@@ -1,0 +1,209 @@
+services:
+
+  # ---------------------------------------------------------------------------
+  # Infrastructure
+  # ---------------------------------------------------------------------------
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: healthcare
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - healthcare_postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d healthcare"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - healthcare-service-network
+
+  nats:
+    image: nats:2-alpine
+    ports:
+      - "4222:4222"
+      - "8222:8222"   # monitoring
+    command: ["--http_port", "8222"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8222/healthz || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - healthcare-service-network
+
+  # ---------------------------------------------------------------------------
+  # Application services
+  # ---------------------------------------------------------------------------
+
+  ingestion-gateway:
+    build:
+      context: .
+      dockerfile: services/ingestion-gateway/Dockerfile
+      args:
+        INCLUDE_DEBUG: debugpy
+    environment:
+      NATS_URL: nats://nats:4222
+    ports:
+      - "8001:8001"
+      - "5679:5678"  # debugpy
+    depends_on:
+      nats:
+        condition: service_healthy
+    networks:
+      - healthcare-service-network
+
+  mpi:
+    build:
+      context: .
+      dockerfile: services/mpi/Dockerfile
+      args:
+        INCLUDE_DEBUG: debugpy
+    environment:
+      NATS_URL: nats://nats:4222
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: healthcare
+      POSTGRES_READER_USER: hs_reader
+      POSTGRES_READER_PASSWORD: hs_reader
+      POSTGRES_WRITER_USER: hs_writer
+      POSTGRES_WRITER_PASSWORD: hs_writer
+    ports:
+      - "8002:8002"
+      - "5680:5678"  # debugpy
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    networks:
+      - healthcare-service-network
+
+  reconciliation:
+    build:
+      context: .
+      dockerfile: services/reconciliation/Dockerfile
+      args:
+        INCLUDE_DEBUG: debugpy
+    environment:
+      NATS_URL: nats://nats:4222
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: healthcare
+      POSTGRES_READER_USER: hs_reader
+      POSTGRES_READER_PASSWORD: hs_reader
+      POSTGRES_WRITER_USER: hs_writer
+      POSTGRES_WRITER_PASSWORD: hs_writer
+    ports:
+      - "8003:8003"
+      - "5681:5678"  # debugpy
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    networks:
+      - healthcare-service-network
+
+  timeline:
+    build:
+      context: .
+      dockerfile: services/timeline/Dockerfile
+      args:
+        INCLUDE_DEBUG: debugpy
+    environment:
+      NATS_URL: nats://nats:4222
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: healthcare
+      POSTGRES_READER_USER: hs_reader
+      POSTGRES_READER_PASSWORD: hs_reader
+      POSTGRES_WRITER_USER: hs_writer
+      POSTGRES_WRITER_PASSWORD: hs_writer
+    ports:
+      - "8004:8004"
+      - "5682:5678"  # debugpy
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    networks:
+      - healthcare-service-network
+
+  patient-summary:
+    build:
+      context: .
+      dockerfile: services/patient-summary/Dockerfile
+      args:
+        INCLUDE_DEBUG: debugpy
+    environment:
+      NATS_URL: nats://nats:4222
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: healthcare
+      POSTGRES_READER_USER: hs_reader
+      POSTGRES_READER_PASSWORD: hs_reader
+      POSTGRES_WRITER_USER: hs_writer
+      POSTGRES_WRITER_PASSWORD: hs_writer
+    ports:
+      - "8005:8005"
+      - "5683:5678"  # debugpy
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    networks:
+      - healthcare-service-network
+
+  patient-api:
+    build:
+      context: .
+      dockerfile: services/patient-api/Dockerfile
+      args:
+        INCLUDE_DEBUG: debugpy
+    environment:
+      MPI_URL: http://mpi:8002
+      RECONCILIATION_URL: http://reconciliation:8003
+      TIMELINE_URL: http://timeline:8004
+      PATIENT_SUMMARY_URL: http://patient-summary:8005
+    ports:
+      - "8000:8000"
+      - "5678:5678"  # debugpy
+    depends_on:
+      - mpi
+      - reconciliation
+      - timeline
+      - patient-summary
+    networks:
+      - healthcare-service-network
+
+  notification:
+    build:
+      context: .
+      dockerfile: services/notification/Dockerfile
+      args:
+        INCLUDE_DEBUG: debugpy
+    environment:
+      NATS_URL: nats://nats:4222
+    ports:
+      - "8006:8006"
+      - "5684:5678"  # debugpy
+    depends_on:
+      nats:
+        condition: service_healthy
+    networks:
+      - healthcare-service-network
+
+volumes:
+  healthcare_postgres_data:
+
+networks:
+  healthcare-service-network:
+    driver: bridge
