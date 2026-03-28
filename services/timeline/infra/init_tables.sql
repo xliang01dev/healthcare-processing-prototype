@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS timeline.llm_pending_assessments (
+CREATE TABLE IF NOT EXISTS timeline.pending_processing (
     canonical_patient_id UUID PRIMARY KEY,
     scheduled_after      TIMESTAMPTZ NOT NULL,
     status               TEXT NOT NULL DEFAULT 'pending'

@@ -1,9 +1,4 @@
-import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "shared"))
-
-from data_provider import DataProvider
+from shared.data_provider import DataProvider
 
 
 class MpiDataProvider(DataProvider):

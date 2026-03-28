@@ -8,10 +8,10 @@ from models import (
     PatientInfoResponse,
     TimelineResponse,
 )
-from patient_service import PatientService
+from patient_service_coordinator import PatientServiceCoordinator
 
 router = APIRouter(prefix="/v1/patient")
-service = PatientService()
+service = PatientServiceCoordinator()
 
 
 @router.get("/{canonical_patient_id}/info", response_model=PatientInfoResponse)

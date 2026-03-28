@@ -1,15 +1,10 @@
-import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "shared"))
-
-from data_provider import DataProvider
+from shared.data_provider import DataProvider
 
 
 class PatientSummaryDataProvider(DataProvider):
     """
     Postgres access for the Patient Summary service.
-    Schema: patient_summary (recommendations, pending_assessments)
+    Schema: patient_summary (recommendations)
     """
 
     async def fetch_latest_recommendation(self, canonical_patient_id: str) -> dict | None:
@@ -32,17 +27,4 @@ class PatientSummaryDataProvider(DataProvider):
         #   (canonical_patient_id, summary, risk_tier, generated_at, content_hash)
         #   VALUES ($1, $2, $3, NOW(), $4);
         #   Deduplication: hash check → structural diff → cosine similarity tiebreaker.
-        pass
-
-    async def fetch_pending_assessments(self) -> list:
-        # TODO: SELECT * FROM patient_summary.pending_assessments
-        #   WHERE scheduled_after < NOW() AND status = 'pending';
-        return []
-
-    async def update_assessment_status(
-        self, canonical_patient_id: str, status: str
-    ) -> None:
-        # TODO: UPDATE patient_summary.pending_assessments SET status = $2
-        #   WHERE canonical_patient_id = $1;
-        #   status values: 'pending' | 'processing' | 'done' | 'failed'
         pass

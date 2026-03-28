@@ -1,15 +1,10 @@
-import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "shared"))
-
-from data_provider import DataProvider
+from shared.data_provider import DataProvider
 
 
 class TimelineDataProvider(DataProvider):
     """
     Postgres access for the Timeline service.
-    Schema: timeline (patient_timeline, llm_pending_assessments)
+    Schema: timeline (timeline_events, patient_timeline, pending_processing)
     """
 
     async def refresh_patient_timeline(self) -> None:
@@ -29,7 +24,7 @@ class TimelineDataProvider(DataProvider):
     async def upsert_pending_assessment(
         self, canonical_patient_id: str, scheduled_after
     ) -> None:
-        # TODO: INSERT INTO timeline.llm_pending_assessments
+        # TODO: INSERT INTO timeline.pending_processing
         #   (canonical_patient_id, scheduled_after, status)
         #   VALUES ($1, $2, 'pending')
         #   ON CONFLICT (canonical_patient_id)
@@ -38,6 +33,6 @@ class TimelineDataProvider(DataProvider):
         pass
 
     async def fetch_due_pending_assessments(self) -> list:
-        # TODO: SELECT * FROM timeline.llm_pending_assessments
+        # TODO: SELECT * FROM timeline.pending_processing
         #   WHERE scheduled_after < NOW() AND status = 'pending';
         return []

@@ -6,11 +6,3 @@ CREATE TABLE IF NOT EXISTS patient_summary.recommendations (
     content_hash         TEXT NOT NULL,
     generated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
-CREATE TABLE IF NOT EXISTS patient_summary.pending_assessments (
-    canonical_patient_id UUID PRIMARY KEY,
-    scheduled_after      TIMESTAMPTZ NOT NULL,
-    status               TEXT NOT NULL DEFAULT 'pending'
-                             CHECK (status IN ('pending', 'processing', 'done', 'failed')),
-    updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);

@@ -8,7 +8,7 @@ from models import (
 )
 
 
-class PatientService:
+class PatientServiceCoordinator:
     async def get_patient_info(self, canonical_patient_id: str) -> PatientInfoResponse:
         # TODO: Call MPI service → mpi.mpi_patients + mpi.mpi_source_identities.
         return PatientInfoResponse()
