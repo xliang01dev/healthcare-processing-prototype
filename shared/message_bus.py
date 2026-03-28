@@ -10,12 +10,12 @@ class MessageBus:
     """
 
     def __init__(self, url: str) -> None:
-        if not url:
-            raise ValueError("MessageBus requires a NATS URL — set the NATS_URL environment variable")
         self._url = url
         self._nc = None
 
     async def connect(self) -> None:
+        if not self._url:
+            raise ValueError("MessageBus requires a NATS URL — set the NATS_URL environment variable")
         self._nc = await nats.connect(self._url)
 
     async def publish(self, topic: str, payload: dict) -> None:

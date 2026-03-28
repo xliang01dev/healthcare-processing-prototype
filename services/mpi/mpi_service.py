@@ -1,4 +1,10 @@
+from mpi_data_provider import MpiDataProvider
+
+
 class MpiService:
+    def __init__(self, data_provider: MpiDataProvider) -> None:
+        self.data_provider = data_provider
+
     async def handle_hydration_event(self, msg) -> None:
         # TODO: Parse operation (add | update | remove) and shared_identifier from msg payload.
         # TODO: add    → INSERT INTO mpi.mpi_patients (shared_identifier) ON CONFLICT DO NOTHING;

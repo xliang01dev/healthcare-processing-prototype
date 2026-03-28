@@ -1,4 +1,10 @@
+from reconciliation_data_provider import ReconciliationDataProvider
+
+
 class ReconciliationService:
+    def __init__(self, data_provider: ReconciliationDataProvider) -> None:
+        self.data_provider = data_provider
+
     async def handle_raw_event(self, msg) -> None:
         # TODO: Check idempotency against reconciliation.processed_messages (message_id lookup).
         # TODO: Call MPI GET /internal/patient/resolve with exponential backoff:
