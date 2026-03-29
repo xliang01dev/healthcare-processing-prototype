@@ -22,7 +22,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 # Copy service code into /app/service
 COPY ./shared /app/shared
-COPY ./services/mpi /app/service
+COPY ./services/patient-event-reconciliation /app/service
 
 # Install app
 RUN --mount=type=cache,target=/root/.cache/pip \
@@ -35,7 +35,7 @@ RUN if [ "$INCLUDE_DEBUG" = "debugpy" ]; then \
 fi
 
 # Expose app port
-ARG APP_PORT=8002
+ARG APP_PORT=8003
 ENV APP_PORT=$APP_PORT
 EXPOSE $APP_PORT
 

@@ -14,8 +14,8 @@ data_provider = TimelineDataProvider(
     reader_dsn=f"postgresql://{os.getenv('POSTGRES_READER_USER')}:{os.getenv('POSTGRES_READER_PASSWORD')}@{_host}:{_port}/{_db}",
     writer_dsn=f"postgresql://{os.getenv('POSTGRES_WRITER_USER')}:{os.getenv('POSTGRES_WRITER_PASSWORD')}@{_host}:{_port}/{_db}",
 )
-
-register_singleton(TimelineService, TimelineService(data_provider))
+bus = MessageBus(os.getenv("NATS_URL", ""))
+register_singleton(TimelineService, TimelineService(data_provider, bus))
 
 
 async def _handle_reconciled_event(msg):
@@ -23,14 +23,12 @@ async def _handle_reconciled_event(msg):
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
-    app.state.bus = MessageBus(os.getenv("NATS_URL", ""))
-    await app.state.bus.connect()
-    await app.state.bus.subscribe("reconciled.events", _handle_reconciled_event)
-    app.state.db = data_provider
+async def lifespan(_app: FastAPI):
+    await bus.connect()
     await data_provider.connect()
+    await bus.subscribe("reconciled.events", _handle_reconciled_event)
     yield
-    await app.state.bus.drain()
+    await bus.drain()
     remove_singleton(TimelineService)
     await data_provider.disconnect()
 
@@ -41,4 +39,4 @@ app.include_router(internal.router)
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "timeline"}
+    return {"status": "ok", "service": "patient-timeline"}

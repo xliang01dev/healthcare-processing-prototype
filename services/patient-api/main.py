@@ -1,14 +1,29 @@
 from contextlib import asynccontextmanager
+import os
 
+import httpx
 from fastapi import FastAPI
 
+from shared.singleton_store import register_singleton, remove_singleton
+from patient_service_coordinator import PatientServiceCoordinator
 import patients_router as patients
+
+http_client = httpx.AsyncClient()
+register_singleton(PatientServiceCoordinator, PatientServiceCoordinator(
+    http_client=http_client,
+    patient_data_url=os.getenv("PATIENT_DATA_URL", ""),
+    reconciliation_url=os.getenv("RECONCILIATION_URL", ""),
+    timeline_url=os.getenv("TIMELINE_URL", ""),
+    patient_summary_url=os.getenv("PATIENT_SUMMARY_URL", ""),
+))
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_app: FastAPI):
     # No NATS, no asyncpg — reads via downstream service calls only.
     yield
+    remove_singleton(PatientServiceCoordinator)
+    await http_client.aclose()
 
 
 app = FastAPI(lifespan=lifespan)

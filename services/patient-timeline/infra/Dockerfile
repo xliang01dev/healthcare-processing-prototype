@@ -22,7 +22,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 # Copy service code into /app/service
 COPY ./shared /app/shared
-COPY ./services/timeline /app/service
+COPY ./services/patient-timeline /app/service
 
 # Install app
 RUN --mount=type=cache,target=/root/.cache/pip \

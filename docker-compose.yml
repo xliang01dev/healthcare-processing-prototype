@@ -13,9 +13,9 @@ services:
     volumes:
       - healthcare_postgres_data:/var/lib/postgresql/data
       - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/00_base.sql
-      - ./services/mpi/infra/init_tables.sql:/docker-entrypoint-initdb.d/01_mpi.sql
-      - ./services/reconciliation/infra/init_tables.sql:/docker-entrypoint-initdb.d/02_reconciliation.sql
-      - ./services/timeline/infra/init_tables.sql:/docker-entrypoint-initdb.d/03_timeline.sql
+      - ./services/patient-data/infra/init_tables.sql:/docker-entrypoint-initdb.d/01_patient_data.sql
+      - ./services/patient-event-reconciliation/infra/init_tables.sql:/docker-entrypoint-initdb.d/02_reconciliation.sql
+      - ./services/patient-timeline/infra/init_tables.sql:/docker-entrypoint-initdb.d/03_timeline.sql
       - ./services/patient-summary/infra/init_tables.sql:/docker-entrypoint-initdb.d/04_patient_summary.sql
     ports:
       - "5432:5432"
@@ -62,10 +62,10 @@ services:
     networks:
       - healthcare-service-network
 
-  mpi:
+  patient-data:
     build:
       context: .
-      dockerfile: services/mpi/infra/Dockerfile
+      dockerfile: services/patient-data/infra/Dockerfile
       args:
         INCLUDE_DEBUG: debugpy
     environment:
@@ -88,10 +88,10 @@ services:
     networks:
       - healthcare-service-network
 
-  reconciliation:
+  patient-event-reconciliation:
     build:
       context: .
-      dockerfile: services/reconciliation/infra/Dockerfile
+      dockerfile: services/patient-event-reconciliation/infra/Dockerfile
       args:
         INCLUDE_DEBUG: debugpy
     environment:
@@ -114,10 +114,10 @@ services:
     networks:
       - healthcare-service-network
 
-  timeline:
+  patient-timeline:
     build:
       context: .
-      dockerfile: services/timeline/infra/Dockerfile
+      dockerfile: services/patient-timeline/infra/Dockerfile
       args:
         INCLUDE_DEBUG: debugpy
     environment:
@@ -155,6 +155,8 @@ services:
       POSTGRES_READER_PASSWORD: hs_reader
       POSTGRES_WRITER_USER: hs_writer
       POSTGRES_WRITER_PASSWORD: hs_writer
+      PATIENT_DATA_URL: http://patient-data:8002
+      TIMELINE_URL: http://patient-timeline:8004
     ports:
       - "8005:8005"
       - "5683:5678"  # debugpy
@@ -163,6 +165,10 @@ services:
         condition: service_healthy
       nats:
         condition: service_healthy
+      patient-data:
+        condition: service_started
+      patient-timeline:
+        condition: service_started
     networks:
       - healthcare-service-network
 
@@ -173,17 +179,17 @@ services:
       args:
         INCLUDE_DEBUG: debugpy
     environment:
-      MPI_URL: http://mpi:8002
-      RECONCILIATION_URL: http://reconciliation:8003
-      TIMELINE_URL: http://timeline:8004
+      PATIENT_DATA_URL: http://patient-data:8002
+      RECONCILIATION_URL: http://patient-event-reconciliation:8003
+      TIMELINE_URL: http://patient-timeline:8004
       PATIENT_SUMMARY_URL: http://patient-summary:8005
     ports:
       - "8000:8000"
       - "5678:5678"  # debugpy
     depends_on:
-      - mpi
-      - reconciliation
-      - timeline
+      - patient-data
+      - patient-event-reconciliation
+      - patient-timeline
       - patient-summary
     networks:
       - healthcare-service-network
