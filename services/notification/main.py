@@ -1,6 +1,9 @@
 from contextlib import asynccontextmanager
+import faulthandler
 import logging
+import logging.config
 import os
+import yaml
 
 from fastapi import FastAPI
 
@@ -8,7 +11,11 @@ from shared.message_bus import MessageBus
 from shared.singleton_store import get_singleton, register_singleton, remove_singleton
 from notification_service import NotificationService
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+faulthandler.enable()
+
+_logging_config_file = os.getenv("LOG_CONFIG", "shared/custom-logging.yaml")
+with open(_logging_config_file) as f:
+    logging.config.dictConfig(yaml.safe_load(f))
 logger = logging.getLogger(__name__)
 
 bus = MessageBus(os.getenv("NATS_URL", ""))

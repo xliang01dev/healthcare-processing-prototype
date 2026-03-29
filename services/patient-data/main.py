@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 import faulthandler
 import logging
+import logging.config
 import os
 import yaml
 
@@ -29,7 +30,12 @@ register_singleton(PatientDataService, PatientDataService(data_provider, bus))
 
 
 async def _handle_hydration_event(msg):
-    await get_singleton(PatientDataService).handle_hydration_event(msg)
+    logger.info(f"_handle_hydration_event called with msg={msg}")
+    try:
+        await get_singleton(PatientDataService).handle_hydration_event(msg)
+    except Exception as e:
+        logger.error(f"Exception in _handle_hydration_event: {e}", exc_info=True)
+        raise
 
 
 async def _handle_source_event(msg):
@@ -40,16 +46,21 @@ async def _handle_source_event(msg):
 async def lifespan(_app: FastAPI):
     await bus.connect()
     await data_provider.connect()
+    logger.info("lifespan: data provider connected")
 
     # Dedicated hydration events (add / update / remove patient records)
     await bus.subscribe("patient.hydrate", _handle_hydration_event)
+    logger.info("lifespan: subscribed to patient.hydrate")
+
     # Raw source events — resolve canonical_patient_id, upsert golden record, re-publish to reconcile.{canonical_patient_id}
     await bus.subscribe("raw.source-medicare", _handle_source_event)
     await bus.subscribe("raw.source-hospital", _handle_source_event)
     await bus.subscribe("raw.source-labs", _handle_source_event)
+    logger.info("lifespan: subscribed to source events")
 
     logger.info("patient-data started")
     yield
+
     await bus.drain()
     remove_singleton(PatientDataService)
     await data_provider.disconnect()

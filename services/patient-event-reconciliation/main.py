@@ -1,6 +1,9 @@
 from contextlib import asynccontextmanager
+import faulthandler
 import logging
+import logging.config
 import os
+import yaml
 
 from fastapi import FastAPI
 
@@ -10,7 +13,11 @@ from patient_event_reconciliation_service import PatientEventReconciliationServi
 from patient_event_reconciliation_data_provider import PatientEventReconciliationDataProvider
 import internal_router as internal
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+faulthandler.enable()
+
+_logging_config_file = os.getenv("LOG_CONFIG", "shared/custom-logging.yaml")
+with open(_logging_config_file) as f:
+    logging.config.dictConfig(yaml.safe_load(f))
 logger = logging.getLogger(__name__)
 
 _host, _port, _db = os.getenv("POSTGRES_HOST"), os.getenv("POSTGRES_PORT", "5432"), os.getenv("POSTGRES_DB")

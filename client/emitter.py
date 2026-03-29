@@ -28,6 +28,11 @@ class Emitter:
         assert self._nc is not None, "Emitter not connected"
         data = json.dumps(payload, default=str).encode()
         await self._nc.publish(subject, data)
+        try:
+            await self._nc.flush()
+        except nats.errors.UnexpectedEOF:
+            # Connection may have been closed, but publish was queued
+            pass
 
     async def close(self) -> None:
         if self._nc is not None:

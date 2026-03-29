@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 import faulthandler
 import logging
+import logging.config
 import os
 import yaml
 
