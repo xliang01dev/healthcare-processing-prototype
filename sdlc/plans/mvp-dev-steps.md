@@ -4,7 +4,7 @@
 
 Execution plan for building the MVP from scratch. Steps are grouped by concern and ordered for
 sequential execution. Steps 1–4 establish the project skeleton and infrastructure. Steps 5–11
-create service stubs. Step 12 completes the Patient API Service orchestrator stub.
+create service stubs. Step 12 verifies all services boot and are healthy.
 
 All services are FastAPI (Python 3.12+), managed with `uv` and `pyproject.toml` per service.
 No ORM — `asyncpg` directly. No implementation logic in stubs — only structure, wiring, and
@@ -16,8 +16,8 @@ health checks.
 - A single Postgres instance with per-service schemas is acceptable for the POC.
 - NATS core (no JetStream) is sufficient — no message persistence.
 - Python deps per service: `fastapi>=0.111`, `uvicorn[standard]>=0.29`, `nats-py>=2.7`,
-  `asyncpg>=0.29`, `pydantic>=2.6`.
-- Dev extras per service: `pytest`, `pytest-asyncio`, `httpx`.
+  `asyncpg>=0.29`, `pydantic>=2.6`, `httpx>=0.27`.
+- Dev extras per service: `pytest`, `pytest-asyncio`, `httpx`, `mypy`.
 - Stub services must boot cleanly, connect to NATS and Postgres, and expose a `/health` endpoint.
   They must NOT implement business logic.
 
@@ -29,69 +29,88 @@ health checks.
 
 **What to create:**
 
-- Monorepo root with a workspace-level `pyproject.toml` declaring all service sub-packages.
-- One directory per service under `services/`:
+- Monorepo root with a workspace-level `pyproject.toml`.
+- One directory per service under `services/` — flat module layout (no `app/` subdirectory):
   - `services/ingestion-gateway/`
-  - `services/mpi/`
-  - `services/reconciliation/`
-  - `services/timeline/`
-  - `services/llm-summary/`
+  - `services/patient-data/`
+  - `services/patient-event-reconciliation/`
+  - `services/patient-timeline/`
+  - `services/patient-summary/`
   - `services/notification/`
   - `services/patient-api/`
 - Inside each service directory:
-  - `pyproject.toml` — project metadata and dependencies (see Appendix in architecture doc for
-    the canonical template).
-  - `Dockerfile` — multi-stage build: `uv sync` in build stage, `uvicorn app.main:app` in run
-    stage.
-  - `app/` package directory with an empty `__init__.py` and a placeholder `main.py`.
+  - `pyproject.toml` — project metadata and dependencies.
+  - `Dockerfile` — multi-stage build: `uv sync` in build stage, `uvicorn main:app` in run stage.
+  - `__init__.py` — empty.
+  - `main.py` — FastAPI app with lifespan and `/health`.
 - A top-level `schemas/` directory for internal JSON schema definitions (populated in later steps).
-- A top-level `shared/` directory for `message_bus.py` and `cache_service.py` stubs
-  (populated in later steps).
+- A top-level `shared/` directory containing:
+  - `message_bus.py` — stub
+  - `singleton_store.py` — stub
 
 **Key files:**
 
 ```
-pyproject.toml                         # workspace root
-schemas/                               # internal event schemas (placeholder)
+pyproject.toml                                  # workspace root
+schemas/                                        # internal event schemas (placeholder)
 shared/
-  message_bus.py                       # stub
-  cache_service.py                     # stub
+  message_bus.py                                # stub
+  singleton_store.py                            # stub
 services/
   ingestion-gateway/
     pyproject.toml
     Dockerfile
-    app/__init__.py
-    app/main.py
-  mpi/
+    __init__.py
+    main.py
+    ingest_service.py
+    ingest_router.py
+  patient-data/
     pyproject.toml
     Dockerfile
-    app/__init__.py
-    app/main.py
-  reconciliation/
+    __init__.py
+    main.py
+    patient_data_service.py
+    patient_data_provider.py
+    internal_router.py
+  patient-event-reconciliation/
     pyproject.toml
     Dockerfile
-    app/__init__.py
-    app/main.py
-  timeline/
+    __init__.py
+    main.py
+    patient_event_reconciliation_service.py
+    patient_event_reconciliation_data_provider.py
+    internal_router.py
+  patient-timeline/
     pyproject.toml
     Dockerfile
-    app/__init__.py
-    app/main.py
-  llm-summary/
+    __init__.py
+    main.py
+    timeline_service.py
+    timeline_data_provider.py
+    internal_router.py
+  patient-summary/
     pyproject.toml
     Dockerfile
-    app/__init__.py
-    app/main.py
+    __init__.py
+    main.py
+    patient_summary_service.py
+    patient_summary_data_provider.py
+    agentic_handler.py
+    internal_router.py
   notification/
     pyproject.toml
     Dockerfile
-    app/__init__.py
-    app/main.py
+    __init__.py
+    main.py
+    notification_service.py
   patient-api/
     pyproject.toml
     Dockerfile
-    app/__init__.py
-    app/main.py
+    __init__.py
+    main.py
+    patient_service_coordinator.py
+    patients_router.py
+    models.py
 ```
 
 **Notes and constraints:**
@@ -99,10 +118,14 @@ services/
 - Each `Dockerfile` must use the same base image and `uv` invocation pattern for consistency.
 - The workspace root `pyproject.toml` should declare `[tool.uv.workspace]` with `members`
   pointing to each service path.
-- Service port assignments (set in Dockerfiles and compose): Ingestion Gateway 8001, MPI 8002,
-  Reconciliation 8003, Timeline 8004, LLM Summary 8005, Notification 8006, Patient API 8000.
-- `app/main.py` in each service must define a `FastAPI` app with a `lifespan` context manager
-  (stub — no real connections yet) and a `GET /health` endpoint returning `{"status": "ok"}`.
+- Service port assignments (set in Dockerfiles and compose): Patient API 8000, Ingestion Gateway
+  8001, Patient Data 8002, Patient Event Reconciliation 8003, Patient Timeline 8004,
+  Patient Summary 8005, Notification 8006.
+- `main.py` in each service must define a `FastAPI` app with a `lifespan` context manager
+  (stub — connections wired but no business logic) and a `GET /health` endpoint.
+- Services and data providers are instantiated at **module level** (outside lifespan). Lifespan
+  only calls `connect()` / `drain()` / `disconnect()`. All service references are stored in the
+  singleton store (`shared/singleton_store.py`), not on `app.state`.
 
 ---
 
@@ -115,9 +138,16 @@ services/
     for `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`. Mounts
     `./infra/postgres/init/` as `/docker-entrypoint-initdb.d/` so SQL init files run automatically.
   - `nats` — official `nats:latest` image, port 4222 (client), port 8222 (monitoring).
-  - All seven services — each built from its own `Dockerfile`, port-mapped per the assignments in
-    Step 1, with `depends_on: [postgres, nats]`, and environment variables for
-    `DATABASE_URL` and `NATS_URL`.
+  - All seven services — each built from its own `Dockerfile`, port-mapped per Step 1, with
+    `depends_on: [postgres, nats]`, and environment variables for `NATS_URL`,
+    `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_READER_USER`,
+    `POSTGRES_READER_PASSWORD`, `POSTGRES_WRITER_USER`, `POSTGRES_WRITER_PASSWORD`.
+  - Inter-service `*_URL` env vars for HTTP calls (Patient Summary and Patient API call downstream
+    internal APIs — see Section 11 call map in architecture doc):
+    - `PATIENT_DATA_URL` (used by patient-api, patient-summary)
+    - `TIMELINE_URL` (used by patient-api, patient-summary)
+    - `RECONCILIATION_URL` (used by patient-api)
+    - `PATIENT_SUMMARY_URL` (used by patient-api)
 
 **Key files:**
 
@@ -130,8 +160,9 @@ infra/
 
 **Notes and constraints:**
 
-- `DATABASE_URL` per service should include the service schema in the connection string or be
-  set to the default and have the schema set via `SET search_path` in the service startup code.
+- Each service uses a **reader DSN** and **writer DSN** — separate Postgres users with scoped
+  privileges (reader: `SELECT` only; writer: `SELECT`, `INSERT`, `UPDATE`, `DELETE`).
+  Pass them as separate env vars (`POSTGRES_READER_USER`, `POSTGRES_WRITER_USER`, etc.).
 - `NATS_URL` for all services: `nats://nats:4222`.
 - Use named volumes for Postgres data so `docker-compose down` does not destroy data by default.
 - Services should use `restart: unless-stopped` to handle startup ordering races with Postgres
@@ -149,14 +180,12 @@ infra/
 
 **Contents to define:**
 
-- A `write_user` role with `LOGIN`, password, and `CONNECT` on the database.
-- A `read_user` role with `LOGIN`, password, and `CONNECT` on the database.
-- `GRANT` statements:
-  - `write_user`: `SELECT`, `INSERT`, `UPDATE`, `DELETE` on all tables in each service schema
-    (schemas defined in Step 4). Also `USAGE` on sequences (for `BIGSERIAL` columns).
-  - `read_user`: `SELECT` only on all tables in each service schema.
-- `ALTER DEFAULT PRIVILEGES` so future tables in each schema automatically inherit the same grants
-  for both roles.
+- `hs_writer` role with `LOGIN`, password, and `CONNECT` on the database.
+- `hs_reader` role with `LOGIN`, password, and `CONNECT` on the database.
+- `GRANT` statements per service schema:
+  - `hs_writer`: `SELECT`, `INSERT`, `UPDATE`, `DELETE` on all tables + `USAGE` on sequences.
+  - `hs_reader`: `SELECT` only on all tables.
+- `ALTER DEFAULT PRIVILEGES` so future tables in each schema automatically inherit the same grants.
 
 **Key files:**
 
@@ -166,13 +195,12 @@ infra/postgres/init/01-users.sql
 
 **Notes and constraints:**
 
-- Do not hardcode passwords in the SQL file — use Postgres variables or accept that this is
-  a local dev file and use well-known dev credentials (e.g. `devpass`). Document the decision.
-- Schemas are created in `02-tables.sql` (Step 4). The `GRANT` statements in this file should
-  reference schemas by name — ensure the order of execution is correct (users before tables).
-- `ALTER DEFAULT PRIVILEGES` is the preferred approach over per-table grants so new tables
-  added during development automatically inherit permissions.
-- The `postgres` superuser (from `POSTGRES_USER`) creates these roles and grants.
+- Schemas are created in `02-tables.sql` (Step 4). Grants reference schemas by name — execution
+  order must be users before tables.
+- `ALTER DEFAULT PRIVILEGES` is preferred over per-table grants.
+- Schemas to grant on: `patient_data`, `patient_event_reconciliation`, `patient_timeline`,
+  `patient_summary`.
+- Ingestion Gateway, Notification, and Patient API have no DB schemas — no grants needed.
 
 ---
 
@@ -184,36 +212,38 @@ infra/postgres/init/01-users.sql
 
 **Contents to define (one schema block per service):**
 
-- `CREATE SCHEMA IF NOT EXISTS` for each service: `mpi`, `reconciliation`, `timeline`, `llm`,
-  `notification`.
-- MPI schema tables (from architecture Section 3 and `mvp-tables.md`):
-  - `mpi.mpi_source_system`
-  - `mpi.mpi_patients`
-  - `mpi.mpi_source_identities` with indexes
-- Reconciliation schema tables:
-  - `reconciliation.reconciliation_events` — raw reconciled events with `canonical_patient_id`,
-    `source_system_id`, `event_date`, `status` (active/voided), `version`, `payload JSONB`,
-    `created_at`.
-  - `reconciliation.processed_messages` — idempotency table: `message_id TEXT PRIMARY KEY`,
-    `processed_at TIMESTAMPTZ`, `result_ref TEXT`.
-  - `reconciliation.reconciliation_conflicts` — conflict log: `id BIGSERIAL PRIMARY KEY`,
-    `canonical_patient_id UUID`, `conflict_type TEXT`, `details JSONB`, `created_at TIMESTAMPTZ`.
-- Timeline schema tables:
-  - `timeline.llm_pending_assessments` — debounce table: `canonical_patient_id UUID PRIMARY KEY`,
-    `scheduled_after TIMESTAMPTZ`, `status TEXT` (pending/processing/done/failed), `created_at`,
-    `updated_at`.
-  - `timeline.patient_timeline` — materialized view over `reconciliation.reconciliation_events`
-    (create the view definition here, using `CREATE MATERIALIZED VIEW ... AS SELECT ...`).
-    Requires a unique index for `REFRESH CONCURRENTLY`.
-- LLM schema tables:
-  - `llm.llm_recommendations` — `id BIGSERIAL PRIMARY KEY`, `canonical_patient_id UUID`,
-    `risk_tier TEXT`, `key_risks JSONB`, `recommended_actions JSONB`, `summary TEXT`,
-    `model TEXT`, `prompt_version TEXT`, `mode TEXT` (batch/agent), `has_changed_from_last BOOL`,
-    `similarity_score NUMERIC`, `output_hash TEXT`, `generated_at TIMESTAMPTZ`.
+- `CREATE SCHEMA IF NOT EXISTS` for each service that owns a DB:
+  `patient_data`, `patient_event_reconciliation`, `patient_timeline`, `patient_summary`.
+
+- **`patient_data` schema:**
+  - `patient_data.patients` — `canonical_patient_id UUID PRIMARY KEY`, `shared_identifier TEXT UNIQUE`, `created_at`.
+  - `patient_data.source_systems` — `id BIGSERIAL PRIMARY KEY`, `source_system_name TEXT UNIQUE`.
+    Seed with `source-a`, `source-b`, `source-c` on creation.
+  - `patient_data.source_identities` — `id BIGSERIAL PRIMARY KEY`, `canonical_patient_id UUID REFERENCES patients`, `source_system_id BIGINT REFERENCES source_systems`, `source_patient_id TEXT`, `first_name TEXT`, `last_name TEXT`, `date_of_birth DATE`, `created_at`.
+    `UNIQUE (source_system_id, source_patient_id)`.
+    Indexes: `(last_name, date_of_birth)` for fallback lookup; `(canonical_patient_id)` for reverse lookup.
+  - `patient_data.golden_records` — `id BIGSERIAL PRIMARY KEY`, `canonical_patient_id UUID REFERENCES patients`, `first_name TEXT`, `last_name TEXT`, `date_of_birth DATE`, `source_system_ids BIGINT[]`, `updated_at TIMESTAMPTZ`, `created_at TIMESTAMPTZ`.
+
+- **`patient_event_reconciliation` schema:**
+  - `patient_event_reconciliation.event_logs` — `id BIGSERIAL PRIMARY KEY`, `canonical_patient_id UUID`, `source_system_id BIGINT`, `message_id TEXT`, `event_type TEXT`, `payload JSONB`, `occurred_at TIMESTAMPTZ`, `created_at TIMESTAMPTZ DEFAULT NOW()`.
+    (Note: `source_system_id` and `canonical_patient_id` are plain values — no FK to other schemas.)
+  - `patient_event_reconciliation.pending_publish` — `id BIGSERIAL PRIMARY KEY`, `canonical_patient_id UUID`, `last_event_log_id BIGINT REFERENCES event_logs(id)`, `scheduled_after TIMESTAMPTZ`, `ceiling_at TIMESTAMPTZ`, `published_at TIMESTAMPTZ`, `updated_at TIMESTAMPTZ DEFAULT NOW()`.
+    Partial index: `(canonical_patient_id, last_event_log_id) WHERE published_at IS NULL`.
+  - `patient_event_reconciliation.resolved_events` — `id BIGSERIAL PRIMARY KEY`, `canonical_patient_id UUID`, `source_system_ids BIGINT[]`, `from_event_log_id BIGINT REFERENCES event_logs(id)`, `to_event_log_id BIGINT REFERENCES event_logs(id)`, `payload JSONB`, `resolution_log TEXT`, `occurred_at TIMESTAMPTZ`, `created_at TIMESTAMPTZ DEFAULT NOW()`.
+  - `patient_event_reconciliation.reconciliation_conflicts` — `id BIGSERIAL PRIMARY KEY`, `canonical_patient_id UUID`, `source_system_ids BIGINT[]`, `conflict_type TEXT`, `details JSONB`, `created_at TIMESTAMPTZ DEFAULT NOW()`.
+  - `patient_event_reconciliation.processed_messages` — `message_id TEXT PRIMARY KEY`, `processed_at TIMESTAMPTZ DEFAULT NOW()`.
+
+- **`patient_timeline` schema:**
+  - `patient_timeline.timeline_events` — `id BIGSERIAL PRIMARY KEY`, `canonical_patient_id UUID`, `event_type TEXT`, `payload JSONB`, `occurred_at TIMESTAMPTZ`, `source_system_id BIGINT`, `created_at TIMESTAMPTZ DEFAULT NOW()`.
+    (`source_system_id` is a plain value — cross-schema boundary; no FK.)
+  - Materialized view `patient_timeline.patient_timeline` over `timeline_events`, ordered by `occurred_at` per patient.
+  - Unique index on the materialized view required for `REFRESH MATERIALIZED VIEW CONCURRENTLY`.
+
+- **`patient_summary` schema:**
+  - `patient_summary.recommendations` — `id BIGSERIAL PRIMARY KEY`, `canonical_patient_id UUID`, `risk_tier TEXT`, `key_risks JSONB`, `recommended_actions JSONB`, `summary TEXT`, `model TEXT`, `prompt_version TEXT`, `mode TEXT`, `has_changed_from_last BOOLEAN`, `similarity_score FLOAT`, `generated_at TIMESTAMPTZ DEFAULT NOW()`.
     Index on `(canonical_patient_id, generated_at DESC)`.
-- Ingestion Gateway — no schema/tables required (stateless; publishes to NATS only).
-- Notification Service — no tables required for the stub (console log only).
-- Patient API Service — no tables required (reads from other service schemas only).
+
+- **Ingestion Gateway, Notification, Patient API** — no schemas or tables (stateless services).
 
 **Key files:**
 
@@ -223,15 +253,12 @@ infra/postgres/init/02-tables.sql
 
 **Notes and constraints:**
 
-- The `patient_timeline` materialized view must cross schemas (`reconciliation.reconciliation_events`).
-  This requires the `timeline` schema to have `SELECT` privilege on the `reconciliation` schema.
-  Add the necessary `GRANT SELECT ON ALL TABLES IN SCHEMA reconciliation TO read_user` in `01-users.sql`
-  or handle via `ALTER DEFAULT PRIVILEGES`.
-- The materialized view requires a unique index to support `REFRESH MATERIALIZED VIEW CONCURRENTLY`.
-  Create it immediately after the `CREATE MATERIALIZED VIEW` statement.
-- Seed `mpi.mpi_source_system` with the three known sources: `source-a`, `source-b`, `source-c`.
-- Follow the exact DDL from `mvp-tables.md` and architecture Section 3 for MPI tables — those
-  definitions are already reviewed and corrected.
+- `event_logs` must be created before `pending_publish` and `resolved_events` (FK target).
+- Cross-schema FK references are **not used** — `source_system_id` in `event_logs` and
+  `timeline_events` is a plain `BIGINT` value, not a FK to `patient_data.source_systems`. This
+  preserves service boundary isolation (in production, schemas would be on separate DB instances).
+- The materialized view unique index must be created immediately after the view definition.
+- `REFRESH MATERIALIZED VIEW CONCURRENTLY` requires the unique index to exist at refresh time.
 
 ---
 
@@ -239,12 +266,14 @@ infra/postgres/init/02-tables.sql
 
 All stubs in this group follow the same structure:
 
-- `FastAPI` app with a `lifespan` context manager that opens a NATS connection and an `asyncpg`
-  pool, stores them on `app.state`, and drains/closes them on shutdown.
+- Module-level instantiation of `MessageBus` and data providers (where applicable).
+- Module-level `register_singleton(ServiceClass, ServiceClass(...))`.
+- `FastAPI` app with a `lifespan` context manager that calls `connect()` on bus and data provider,
+  subscribes to NATS topics with no-op handlers, calls `drain()` / `remove_singleton()` /
+  `disconnect()` on shutdown — in that order.
 - `GET /health` endpoint returning `{"status": "ok", "service": "<service-name>"}`.
-- NATS subscriptions declared in `lifespan` but with no-op handlers (log the message, return).
-- No business logic. No database writes beyond connection validation (e.g. `SELECT 1`).
-- `DATABASE_URL` and `NATS_URL` read from environment variables.
+- No business logic. No database writes beyond connection validation.
+- All env vars (`NATS_URL`, `POSTGRES_*`, `*_URL`) read from environment.
 
 ---
 
@@ -252,153 +281,203 @@ All stubs in this group follow the same structure:
 
 **What to create:**
 
-- `services/ingestion-gateway/app/main.py` — FastAPI app.
-- `services/ingestion-gateway/app/routers/ingest.py` — stub router with three POST endpoints:
+- `services/ingestion-gateway/main.py` — FastAPI app. Module-level: `bus = MessageBus(...)`,
+  `register_singleton(IngestService, IngestService(bus))`.
+- `services/ingestion-gateway/ingest_service.py` — `IngestService` class with `bus: MessageBus`
+  constructor param and a stub `ingest_event(source, body)` method.
+- `services/ingestion-gateway/ingest_router.py` — stub router with three POST endpoints:
   - `POST /ingest/source-a`
   - `POST /ingest/source-b`
   - `POST /ingest/source-c`
-  Each accepts a JSON body, logs receipt, and returns `{"received": true}`. No NATS publish yet.
+  Each accepts a JSON body, calls `get_singleton(IngestService).ingest_event(...)`, returns
+  `{"received": true}`.
 
 **Key files:**
 
 ```
-services/ingestion-gateway/app/main.py
-services/ingestion-gateway/app/routers/ingest.py
+services/ingestion-gateway/main.py
+services/ingestion-gateway/ingest_service.py
+services/ingestion-gateway/ingest_router.py
 ```
 
 **Notes and constraints:**
 
-- Ingestion Gateway is stateless — no Postgres connection needed in the stub.
-- NATS connection should still be opened in `lifespan` and stored on `app.state.nc` to validate
-  the wiring before business logic is added.
-- Topics this service will publish to (for documentation only at stub stage):
+- Ingestion Gateway is stateless — no Postgres connection needed.
+- `IngestService` receives `MessageBus` via constructor. It never accesses `app.state`.
+- Lifespan: `await bus.connect()` → subscribe (no-op) → yield → `await bus.drain()` →
+  `remove_singleton(IngestService)`.
+- Topics this service will publish to (TODO comments only at stub stage):
   `raw.source-a`, `raw.source-b`, `raw.source-c`.
 - The `message-id` derivation (`sha256(source_id + version + source_system)`) is not
-  implemented in the stub — noted as a TODO comment.
+  implemented — add a TODO comment in `ingest_event`.
 
 ---
 
-### Step 6 — Master Patient Index (MPI) stub
+### Step 6 — Patient Data Service stub
 
 **What to create:**
 
-- `services/mpi/app/main.py` — FastAPI app with `lifespan` opening asyncpg pool.
-- `services/mpi/app/routers/internal.py` — stub internal router:
-  - `GET /internal/patient/resolve` — accepts `source_system` and `source_patient_id` as query
-    params, returns a hardcoded `{"canonical_patient_id": null, "status": "stub"}`.
-- NATS subscriptions for `raw.source-a`, `raw.source-b`, `raw.source-c` registered in
-  `lifespan` with no-op handlers.
+- `services/patient-data/patient_data_provider.py` — `PatientDataProvider` class with reader/writer
+  DSN constructor params and stub methods: `connect()`, `disconnect()`, `upsert_patient()`,
+  `upsert_source_identity()`, `upsert_golden_record()`, `fetch_golden_record()`.
+- `services/patient-data/patient_data_service.py` — `PatientDataService` class with
+  `data_provider: PatientDataProvider` and `bus: MessageBus` constructor params.
+  Stub methods: `handle_source_event(msg)`, `handle_hydrate(msg)`.
+- `services/patient-data/internal_router.py` — stub internal router:
+  - `GET /internal/patient/{canonical_patient_id}/golden-record` → `{"stub": true}`
+- `services/patient-data/main.py` — module-level: `data_provider`, `bus`,
+  `register_singleton(PatientDataService, PatientDataService(data_provider, bus))`.
+  Lifespan subscribes to `raw.source-a`, `raw.source-b`, `raw.source-c`, `patient.hydrate`
+  with no-op handlers.
 
 **Key files:**
 
 ```
-services/mpi/app/main.py
-services/mpi/app/routers/internal.py
+services/patient-data/main.py
+services/patient-data/patient_data_service.py
+services/patient-data/patient_data_provider.py
+services/patient-data/internal_router.py
 ```
 
 **Notes and constraints:**
 
-- This service subscribes to all three raw topics and also exposes an internal HTTP endpoint.
-  Both are stub only at this stage.
+- This service consumes raw topics and publishes to `reconcile.{canonical_patient_id}` — add
+  TODO comments in `handle_source_event`.
 - The atomic upsert pattern (`INSERT ... ON CONFLICT DO NOTHING; SELECT ...`) is the critical
-  implementation detail — add a TODO comment at the resolve endpoint pointing to architecture
-  Section 3.
-- The Reconciliation Service calls this endpoint via HTTP with retry/backoff — the stub must
-  return a valid JSON response (even if hardcoded) so Reconciliation's future retry logic
-  does not error.
+  implementation detail — add a TODO comment in `upsert_patient` pointing to architecture Section 3.
+- `canonical_patient_id` is embedded in the NATS subject (`reconcile.{id}`) — no synchronous
+  HTTP call is made by Patient Event Reconciliation to resolve identity.
+- Golden record is built/updated on every source identity upsert — add TODO in
+  `upsert_golden_record`.
+- Teardown order: `drain → remove_singleton → disconnect`.
 
 ---
 
-### Step 7 — Reconciliation Service stub
+### Step 7 — Patient Event Reconciliation stub
 
 **What to create:**
 
-- `services/reconciliation/app/main.py` — FastAPI app with `lifespan` opening asyncpg pool and
-  NATS connection.
-- NATS subscriptions for `raw.source-a`, `raw.source-b`, `raw.source-c` registered in
-  `lifespan` with no-op handlers.
-- No HTTP endpoints beyond `/health` (Reconciliation is event-driven only).
+- `services/patient-event-reconciliation/patient_event_reconciliation_data_provider.py` —
+  `PatientEventReconciliationDataProvider` with reader/writer DSN params and stub methods:
+  `connect()`, `disconnect()`, `is_message_processed(message_id)`, `mark_message_processed(message_id)`,
+  `insert_event_log(...)`, `upsert_pending_publish(...)`, `insert_resolved_event(...)`,
+  `fetch_conflicts(canonical_patient_id, page, page_size)`.
+- `services/patient-event-reconciliation/patient_event_reconciliation_service.py` —
+  `PatientEventReconciliationService` with `data_provider` and `bus: MessageBus` constructor params.
+  Stub methods: `handle_reconcile_event(msg)`, `fetch_conflicts(...)`.
+- `services/patient-event-reconciliation/internal_router.py` — stub:
+  - `GET /internal/patient/{canonical_patient_id}/conflicts` → `[]`
+- `services/patient-event-reconciliation/main.py` — module-level: `data_provider`, `bus`,
+  `register_singleton(...)`. Lifespan subscribes to `reconcile.*` (wildcard).
 
 **Key files:**
 
 ```
-services/reconciliation/app/main.py
+services/patient-event-reconciliation/main.py
+services/patient-event-reconciliation/patient_event_reconciliation_service.py
+services/patient-event-reconciliation/patient_event_reconciliation_data_provider.py
+services/patient-event-reconciliation/internal_router.py
 ```
 
 **Notes and constraints:**
 
-- The idempotency check against `reconciliation.processed_messages` is not implemented in the
-  stub — add a TODO comment.
-- The HTTP call to MPI (`GET /internal/patient/resolve`) with exponential backoff retry is not
-  implemented — add a TODO comment with the retry schedule from architecture Section 2.
-- Publishes to `reconciled.events` — not implemented in stub; noted as TODO.
-- Horizontal scaling via consistent hashing on `canonical_patient_id` is a future concern —
-  note it as out of scope for MVP.
+- Subscribes to `reconcile.*` — wildcard captures all per-patient subjects
+  (`reconcile.{canonical_patient_id}`). NATS guarantees per-subject ordering, which makes the
+  debounce logic safe without cross-instance coordination.
+- `canonical_patient_id` is extracted from `msg.subject` (e.g. `reconcile.abc-123` → `abc-123`)
+  — no HTTP call to resolve identity. Add a TODO comment showing this extraction.
+- Idempotency check via `processed_messages` — add TODO in `handle_reconcile_event`.
+- Debounce logic (`event_logs` → `pending_publish`) — add TODO referencing architecture Section 5.
+- Publishes to `reconciled.events` after debounce window expires — add TODO.
 
 ---
 
-### Step 8 — Timeline Service stub
+### Step 8 — Patient Timeline Service stub
 
 **What to create:**
 
-- `services/timeline/app/main.py` — FastAPI app with `lifespan` opening asyncpg pool and
-  NATS connection.
-- NATS subscription for `reconciled.events` registered in `lifespan` with a no-op handler.
-- No HTTP endpoints beyond `/health` (Timeline Service is event-driven only).
+- `services/patient-timeline/timeline_data_provider.py` — `TimelineDataProvider` with reader/writer
+  DSN params and stub methods: `connect()`, `disconnect()`, `refresh_patient_timeline()`,
+  `fetch_patient_timeline(canonical_patient_id, page, page_size)`.
+- `services/patient-timeline/timeline_service.py` — `TimelineService` with `data_provider` and
+  `bus: MessageBus` constructor params. Stub methods: `handle_reconciled_event(msg)`,
+  `fetch_patient_timeline(...)`.
+- `services/patient-timeline/internal_router.py` — stub:
+  - `GET /internal/patient/timeline?canonical_patient_id=&page=&page_size=` → `[]`
+- `services/patient-timeline/main.py` — module-level: `data_provider`, `bus`,
+  `register_singleton(TimelineService, ...)`. Lifespan subscribes to `reconciled.events`.
 
 **Key files:**
 
 ```
-services/timeline/app/main.py
+services/patient-timeline/main.py
+services/patient-timeline/timeline_service.py
+services/patient-timeline/timeline_data_provider.py
+services/patient-timeline/internal_router.py
 ```
 
 **Notes and constraints:**
 
+- Patient Timeline is a pure reactor — it does not own a debounce table. Debounce is in
+  Patient Event Reconciliation. Timeline just refreshes the materialized view and publishes.
 - The refresh-then-publish ordering rule is the critical constraint: `REFRESH MATERIALIZED VIEW
   CONCURRENTLY patient_timeline` must complete before `timeline.updated` is published.
-  Add a TODO comment with this rule clearly stated.
-- The debounce upsert on `timeline.llm_pending_assessments` is not implemented — add a TODO.
-- Publishing `timeline.updated` is not implemented — add a TODO.
-- `REFRESH MATERIALIZED VIEW CONCURRENTLY` requires a unique index on `patient_timeline` —
-  confirm the index exists in `02-tables.sql` (Step 4).
+  Add a TODO comment with this rule clearly stated in `handle_reconciled_event`.
+- `REFRESH MATERIALIZED VIEW CONCURRENTLY` requires a unique index on the view — confirm the
+  index exists in `02-tables.sql` (Step 4).
+- Publishing `timeline.updated` is not implemented in the stub — add a TODO.
 
 ---
 
-### Step 9 — LLM Summary Service stub
+### Step 9 — Patient Summary Service stub
 
 **What to create:**
 
-- `services/llm-summary/app/main.py` — FastAPI app with `lifespan` opening asyncpg pool and
-  NATS connection.
-- `services/llm-summary/app/backends/llm_backend.py` — abstract `LLMBackend` interface stub:
-  ```
-  class LLMBackend:
-      async def complete(self, prompt: str, context: dict) -> AsyncIterator[str]: ...
-  ```
-- `services/llm-summary/app/backends/demo_backend.py` — `DemoBackend` stub that returns an
-  empty async iterator. This is the swappable implementation (future: Ollama, LangGraph, Claude API).
-- NATS subscription for `timeline.updated` registered in `lifespan` with a no-op handler.
-- No HTTP endpoints beyond `/health`.
+- `services/patient-summary/patient_summary_data_provider.py` — `PatientSummaryDataProvider`
+  with reader/writer DSN params and stub methods: `connect()`, `disconnect()`,
+  `insert_recommendation(...)`, `fetch_latest_recommendation(...)`,
+  `fetch_recommendations(...)`.
+- `services/patient-summary/agentic_handler.py` — stub `AgenticHandler` class with abstract
+  `complete(prompt: str, context: dict)` method. The demo implementation returns an empty result
+  with simulated async delay.
+- `services/patient-summary/patient_summary_service.py` — `PatientSummaryService` with
+  `data_provider`, `http_client: httpx.AsyncClient`, `bus: MessageBus`,
+  `timeline_url: str`, `patient_data_url: str` constructor params.
+  Stub methods: `_fetch_patient_timeline(canonical_patient_id)`,
+  `_fetch_golden_record(canonical_patient_id)`, `_assess_patient(canonical_patient_id)`,
+  `handle_timeline_updated(msg)`, `run_batch_for_patient(canonical_patient_id)`, `run_batch()`.
+- `services/patient-summary/internal_router.py` — stub:
+  - `GET /internal/patient/{canonical_patient_id}/recommendation` → `None`
+  - `GET /internal/patient/{canonical_patient_id}/recommendations` → `[]`
+  - `POST /internal/patient/recommendations` → `{"queued": true}`
+- `services/patient-summary/main.py` — module-level: `data_provider`, `http_client = httpx.AsyncClient()`,
+  `bus`, `register_singleton(PatientSummaryService, PatientSummaryService(...))`.
+  Lifespan: `connect()` bus and data provider, subscribe `timeline.updated`.
+  Teardown: `drain → remove_singleton → http_client.aclose() → disconnect`.
 
 **Key files:**
 
 ```
-services/llm-summary/app/main.py
-services/llm-summary/app/backends/llm_backend.py
-services/llm-summary/app/backends/demo_backend.py
+services/patient-summary/main.py
+services/patient-summary/patient_summary_service.py
+services/patient-summary/patient_summary_data_provider.py
+services/patient-summary/agentic_handler.py
+services/patient-summary/internal_router.py
 ```
 
 **Notes and constraints:**
 
-- The `LLMBackend` interface must match the contract in architecture Section 6:
-  `complete(prompt: str, context: dict) -> AsyncIterator[str]`.
-- The cron scheduler (every 12 hours, drains `llm_pending_assessments`) is not implemented in
-  the stub — add a TODO comment referencing Section 6 batch mode steps.
-- The deduplication write path (hash check → structural diff → cosine similarity) is not
-  implemented — add a TODO.
-- MVP default is hash check only. Structural diff and cosine are extension points — note this.
-- `pyproject.toml` for this service may need an additional dep (`anthropic` or `httpx`) in the
-  future — leave a comment noting this.
+- `httpx.AsyncClient` is instantiated at module level (synchronous `__init__`). It is closed in
+  lifespan teardown via `await http_client.aclose()` — after `remove_singleton` but before
+  the data provider disconnects.
+- `_fetch_patient_timeline` calls `GET {timeline_url}/internal/patient/timeline?canonical_patient_id={id}`.
+- `_fetch_golden_record` calls `GET {patient_data_url}/internal/patient/{id}/golden-record`.
+- `_assess_patient` is the shared logic called by both event-driven and batch paths — add TODOs
+  for the full sequence (fetch timeline → fetch golden record → build prompt → call LLM →
+  dedup check → insert recommendation → publish `risk.computed`).
+- `run_batch()` is the cron entry point — add a TODO referencing architecture Section 6 batch steps.
+- Deduplication write path (hash check → structural diff → cosine similarity) — add a TODO.
+- `pyproject.toml` for this service needs `httpx` as a runtime dependency.
 
 ---
 
@@ -406,26 +485,26 @@ services/llm-summary/app/backends/demo_backend.py
 
 **What to create:**
 
-- `services/notification/app/main.py` — FastAPI app with `lifespan` opening NATS connection
-  (no Postgres pool needed — this service is stateless for the stub).
-- NATS subscription for `risk.computed` registered in `lifespan` with a no-op handler that
-  logs the message to stdout.
-- No HTTP endpoints beyond `/health`.
+- `services/notification/notification_service.py` — `NotificationService` class with
+  `bus: MessageBus` constructor param. Stub `handle_risk_computed(msg)` method that logs receipt.
+- `services/notification/main.py` — module-level: `bus`, `register_singleton(NotificationService, ...)`.
+  Lifespan subscribes to `risk.computed` with a no-op handler that calls
+  `get_singleton(NotificationService).handle_risk_computed(msg)`.
+  Teardown: `drain → remove_singleton`.
 
 **Key files:**
 
 ```
-services/notification/app/main.py
+services/notification/main.py
+services/notification/notification_service.py
 ```
 
 **Notes and constraints:**
 
-- Notification Service has no database tables — it consumes events and logs/webhooks only.
-  No asyncpg pool is needed in the stub.
+- Notification Service has no database tables — stateless. No asyncpg pool needed.
 - The alert routing logic (High/Critical risk tier → console log or webhook) is not implemented —
-  add a TODO comment.
-- The webhook destination is not configured — add a `WEBHOOK_URL` env var placeholder in
-  `docker-compose.yml` (empty by default).
+  add a TODO comment in `handle_risk_computed`.
+- Add a `WEBHOOK_URL` env var placeholder in `docker-compose.yml` (empty by default).
 
 ---
 
@@ -433,35 +512,40 @@ services/notification/app/main.py
 
 **What to create:**
 
-- `services/patient-api/app/main.py` — FastAPI app with `lifespan`. No NATS connection (Patient
-  API is HTTP-only). No Postgres pool (reads via downstream service calls, not direct DB access).
-- `services/patient-api/app/routers/patients.py` — stub router with all six endpoints returning
-  placeholder responses:
+- `services/patient-api/patient_service_coordinator.py` — `PatientServiceCoordinator` class with
+  `http_client: httpx.AsyncClient`, `patient_data_url: str`, `reconciliation_url: str`,
+  `timeline_url: str`, `patient_summary_url: str` constructor params. Stub methods for each
+  downstream call (add TODO comments pointing to the target internal endpoint per the architecture
+  Section 11 call map).
+- `services/patient-api/patients_router.py` — stub router with all six endpoints:
   - `GET /v1/patient/{canonical_patient_id}/info` → `{"stub": true}`
   - `GET /v1/patient/{canonical_patient_id}/timelines` → `{"stub": true}`
   - `GET /v1/patient/{canonical_patient_id}/recommendation` → `{"stub": true}`
   - `GET /v1/patient/{canonical_patient_id}/recommendations` → `{"stub": true}`
   - `GET /v1/patient/{canonical_patient_id}/conflicts` → `{"stub": true}`
   - `POST /v1/patient/recommendations` → `{"stub": true}`
+- `services/patient-api/models.py` — Pydantic stub models for request/response shapes.
+- `services/patient-api/main.py` — module-level: `http_client = httpx.AsyncClient()`,
+  `register_singleton(PatientServiceCoordinator, PatientServiceCoordinator(http_client=..., ...))`.
+  Lifespan: teardown calls `remove_singleton(PatientServiceCoordinator)`,
+  `await http_client.aclose()`.
 
 **Key files:**
 
 ```
-services/patient-api/app/main.py
-services/patient-api/app/routers/patients.py
+services/patient-api/main.py
+services/patient-api/patient_service_coordinator.py
+services/patient-api/patients_router.py
+services/patient-api/models.py
 ```
 
 **Notes and constraints:**
 
-- Patient API does not own any DB tables — it orchestrates reads from downstream services.
-  In the POC, these are direct in-process function calls; in production, each downstream
-  service exposes its own internal HTTP API. Add a comment to each stub handler noting
-  the downstream service and table it will call (see architecture Section 10 Call Map).
-- `POST /v1/patient/recommendations` is the only HTTP-triggered write path into
-  `llm_recommendations` — note this explicitly in the stub handler.
-- Pydantic request/response models for all six endpoints should be defined as stubs in
-  `services/patient-api/app/models.py` with all fields present but no validation logic.
-- Port 8000 — this is the external-facing service and the primary entry point for testing.
+- Patient API has no NATS connection and no Postgres pool — HTTP-only orchestration layer.
+- `httpx.AsyncClient` is instantiated at module level. It is closed in lifespan teardown.
+- `POST /v1/patient/recommendations` is the only HTTP-triggered path to trigger a single-patient
+  assessment — note this explicitly in the stub handler.
+- Port 8000 — the external-facing entry point for testing.
 
 ---
 
@@ -503,22 +587,41 @@ infra/postgres/init/02-tables.sql
 |---|---|---|
 | Patient API | 8000 | 8000 |
 | Ingestion Gateway | 8001 | 8001 |
-| MPI | 8002 | 8002 |
-| Reconciliation | 8003 | 8003 |
-| Timeline | 8004 | 8004 |
-| LLM Summary | 8005 | 8005 |
+| Patient Data | 8002 | 8002 |
+| Patient Event Reconciliation | 8003 | 8003 |
+| Patient Timeline | 8004 | 8004 |
+| Patient Summary | 8005 | 8005 |
 | Notification | 8006 | 8006 |
 | Postgres | 5432 | 5432 |
 | NATS client | 4222 | 4222 |
 | NATS monitor | 8222 | 8222 |
 
+---
+
 ## Reference: NATS Topic Ownership
 
 | Topic | Producer | Consumer(s) |
 |---|---|---|
-| `raw.source-a` | Ingestion Gateway | MPI, Reconciliation |
-| `raw.source-b` | Ingestion Gateway | MPI, Reconciliation |
-| `raw.source-c` | Ingestion Gateway | MPI, Reconciliation |
-| `reconciled.events` | Reconciliation | Timeline |
-| `timeline.updated` | Timeline | LLM Summary |
-| `risk.computed` | LLM Summary | Notification |
+| `raw.source-a` | Ingestion Gateway | Patient Data Service |
+| `raw.source-b` | Ingestion Gateway | Patient Data Service |
+| `raw.source-c` | Ingestion Gateway | Patient Data Service |
+| `patient.hydrate` | Internal | Patient Data Service |
+| `reconcile.{canonical_patient_id}` | Patient Data Service | Patient Event Reconciliation |
+| `reconciled.events` | Patient Event Reconciliation | Patient Timeline Service |
+| `timeline.updated` | Patient Timeline Service | Patient Summary Service |
+| `risk.computed` | Patient Summary Service | Notification Service |
+
+---
+
+## Reference: Inter-Service HTTP Calls
+
+| Caller | Target service | Internal endpoint |
+|---|---|---|
+| Patient Summary | Patient Timeline | `GET /internal/patient/timeline?canonical_patient_id=` |
+| Patient Summary | Patient Data | `GET /internal/patient/{id}/golden-record` |
+| Patient API | Patient Data | `GET /internal/patient/{id}/golden-record` |
+| Patient API | Patient Timeline | `GET /internal/patient/timeline` |
+| Patient API | Patient Event Reconciliation | `GET /internal/patient/{id}/conflicts` |
+| Patient API | Patient Summary | `GET /internal/patient/{id}/recommendation` |
+| Patient API | Patient Summary | `GET /internal/patient/{id}/recommendations` |
+| Patient API | Patient Summary | `POST /internal/patient/recommendations` |
