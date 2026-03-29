@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import logging
 import os
 
 import httpx
@@ -7,6 +8,9 @@ from fastapi import FastAPI
 from shared.singleton_store import register_singleton, remove_singleton
 from patient_service_coordinator import PatientServiceCoordinator
 import patients_router as patients
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
 
 http_client = httpx.AsyncClient()
 register_singleton(PatientServiceCoordinator, PatientServiceCoordinator(
@@ -21,9 +25,11 @@ register_singleton(PatientServiceCoordinator, PatientServiceCoordinator(
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     # No NATS, no asyncpg — reads via downstream service calls only.
+    logger.info("patient-api started")
     yield
     remove_singleton(PatientServiceCoordinator)
     await http_client.aclose()
+    logger.info("patient-api stopped")
 
 
 app = FastAPI(lifespan=lifespan)

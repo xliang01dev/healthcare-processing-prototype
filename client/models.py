@@ -69,7 +69,7 @@ class MedicareEvent(BaseModel):
     """
     # Envelope
     message_id: str
-    source_system: str = "source-a"
+    source_system: str = "source-medicare"
     source_patient_id: str      # medicare_id — source's own patient identifier
     event_type: str             # "medicare_enrollment" | "medicare_claims" | "hcc_risk_score_update"
 
@@ -104,7 +104,7 @@ class HospitalEvent(BaseModel):
     """
     # Envelope
     message_id: str
-    source_system: str = "source-b"
+    source_system: str = "source-hospital"
     source_patient_id: str      # hospital MRN — Source B's own patient identifier
     event_type: str             # "hospital_encounter" | "emergency_visit" | "outpatient_procedure"
 
@@ -140,7 +140,7 @@ class LabEvent(BaseModel):
     """
     # Envelope
     message_id: str
-    source_system: str = "source-c"
+    source_system: str = "source-labs"
     source_patient_id: str      # lab patient ID — Source C's own identifier
     event_type: str = "lab_result"
 

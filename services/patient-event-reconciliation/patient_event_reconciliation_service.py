@@ -1,5 +1,9 @@
+import logging
+
 from patient_event_reconciliation_data_provider import PatientEventReconciliationDataProvider
 from shared.message_bus import MessageBus
+
+logger = logging.getLogger(__name__)
 
 
 class PatientEventReconciliationService:
@@ -8,9 +12,11 @@ class PatientEventReconciliationService:
         self.bus = bus
 
     async def fetch_conflicts(self, canonical_patient_id: str, page: int, page_size: int) -> list:
+        logger.info("fetch_conflicts: canonical_patient_id=%s page=%s page_size=%s", canonical_patient_id, page, page_size)
         return await self.data_provider.fetch_conflicts(canonical_patient_id, page, page_size)
 
     async def handle_reconcile_event(self, msg) -> None:
+        logger.info("handle_reconcile_event: subject=%s data=%s", msg.subject, msg.data)
         # TODO: Check idempotency against patient_event_reconciliation.processed_messages (message_id lookup).
         # TODO: canonical_patient_id is already resolved — extract from msg subject (reconcile.{canonical_patient_id}).
         # TODO: Append to event_logs via data_provider.insert_event_log().
@@ -20,4 +26,3 @@ class PatientEventReconciliationService:
         #   Write merged result via data_provider.insert_resolved_event().
         #   Publish to reconciled.events via self.bus.
         #   Mark pending_publish.published_at = NOW().
-        pass

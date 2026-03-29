@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import logging
 import os
 
 from fastapi import FastAPI
@@ -8,6 +9,9 @@ from shared.singleton_store import get_singleton, register_singleton, remove_sin
 from timeline_service import TimelineService
 from timeline_data_provider import TimelineDataProvider
 import internal_router as internal
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
 
 _host, _port, _db = os.getenv("POSTGRES_HOST"), os.getenv("POSTGRES_PORT", "5432"), os.getenv("POSTGRES_DB")
 data_provider = TimelineDataProvider(
@@ -27,10 +31,12 @@ async def lifespan(_app: FastAPI):
     await bus.connect()
     await data_provider.connect()
     await bus.subscribe("reconciled.events", _handle_reconciled_event)
+    logger.info("patient-timeline started")
     yield
     await bus.drain()
     remove_singleton(TimelineService)
     await data_provider.disconnect()
+    logger.info("patient-timeline stopped")
 
 
 app = FastAPI(lifespan=lifespan)

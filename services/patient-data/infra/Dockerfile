@@ -13,7 +13,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     uv sync --frozen --no-install-project --no-dev
 
 COPY ./shared /app/shared
-COPY ./services/patient-data /app/service
+COPY ./services/patient-data /app
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     uv sync --frozen --no-dev
@@ -27,4 +27,4 @@ ARG APP_PORT=8002
 ENV APP_PORT=$APP_PORT
 EXPOSE $APP_PORT
 
-CMD .venv/bin/uvicorn service.main:app --host 0.0.0.0 --port $APP_PORT --workers 1 --timeout-keep-alive 60
+CMD .venv/bin/uvicorn main:app --host 0.0.0.0 --port $APP_PORT --workers 1 --timeout-keep-alive 60

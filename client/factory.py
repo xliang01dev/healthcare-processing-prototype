@@ -190,8 +190,8 @@ def build_hydrate(patient: dict) -> tuple[str, HydrateEvent]:
 
 
 def build_medicare(patient: dict) -> tuple[str, MedicareEvent]:
-    return "raw.source-a", MedicareEvent(
-        message_id=make_message_id(patient["medicare_id"], "source-a"),
+    return "raw.source-medicare", MedicareEvent(
+        message_id=make_message_id(patient["medicare_id"], "source-medicare"),
         source_patient_id=patient["medicare_id"],
         event_type=random.choice(_MEDICARE_EVENT_TYPES),
         medicare_id=patient["medicare_id"],
@@ -211,8 +211,8 @@ def build_hospital(patient: dict) -> tuple[str, HospitalEvent]:
     icd_code, _ = random.choice(_ICD10_CODES)
     admission = _days_ago(random.randint(7, 180))
     discharge = admission + timedelta(days=random.randint(1, 7))
-    return "raw.source-b", HospitalEvent(
-        message_id=make_message_id(patient["mrn"], "source-b"),
+    return "raw.source-hospital", HospitalEvent(
+        message_id=make_message_id(patient["mrn"], "source-hospital"),
         source_patient_id=patient["mrn"],
         event_type=random.choice(_HOSPITAL_EVENT_TYPES),
         medicare_id=patient["medicare_id"],
@@ -230,8 +230,8 @@ def build_hospital(patient: dict) -> tuple[str, HospitalEvent]:
 
 def build_lab(patient: dict) -> tuple[str, LabEvent]:
     test, value, unit, ref_range = random.choice(_LAB_TESTS)
-    return "raw.source-c", LabEvent(
-        message_id=make_message_id(patient["lab_id"], "source-c"),
+    return "raw.source-labs", LabEvent(
+        message_id=make_message_id(patient["lab_id"], "source-labs"),
         source_patient_id=patient["lab_id"],
         medicare_id=patient["medicare_id"],
         patient_first_name=patient["first_name"],   # different field name from A/B
@@ -247,10 +247,10 @@ def build_lab(patient: dict) -> tuple[str, LabEvent]:
 
 
 _BUILDERS = {
-    "i": build_hydrate,
-    "a": build_medicare,
+    "h": build_hydrate,
+    "m": build_medicare,
     "b": build_hospital,
-    "c": build_lab,
+    "l": build_lab,
 }
 
 

@@ -22,3 +22,6 @@ WITH NO DATA;
 -- Unique index required for REFRESH MATERIALIZED VIEW CONCURRENTLY
 CREATE UNIQUE INDEX IF NOT EXISTS patient_timeline_id_idx
     ON patient_timeline.patient_timeline (id);
+
+-- Transfer ownership so hs_writer can REFRESH without needing pg_maintain
+ALTER MATERIALIZED VIEW patient_timeline.patient_timeline OWNER TO hs_writer;

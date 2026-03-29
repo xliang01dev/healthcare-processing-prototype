@@ -34,10 +34,10 @@ DEFAULT_NATS_URL = "nats://localhost:4222"
 _DIVIDER = "─" * 52
 
 _SOURCE_LABELS = {
-    "i": ("Hydrate patient",  "patient.hydrate"),
-    "a": ("Medicare",         "raw.source-a"),
-    "b": ("Hospital",         "raw.source-b"),
-    "c": ("Labs",             "raw.source-c"),
+    "h": ("Hydrate patient",  "patient.hydrate"),
+    "m": ("Medicare",         "raw.source-medicare"),
+    "b": ("Hospital",         "raw.source-hospital"),
+    "l": ("Labs",             "raw.source-labs"),
 }
 
 # ---------------------------------------------------------------------------

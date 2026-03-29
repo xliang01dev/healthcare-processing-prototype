@@ -11,9 +11,6 @@ CREATE USER hs_reader WITH PASSWORD 'hs_reader';
 GRANT CONNECT ON DATABASE healthcare TO hs_writer, hs_reader;
 GRANT USAGE ON SCHEMA patient_data, patient_event_reconciliation, patient_timeline, patient_summary TO hs_writer, hs_reader;
 
--- hs_writer: allow refreshing materialized views (pg_maintain is Postgres 16+)
-GRANT pg_maintain TO hs_writer;
-
 -- hs_writer: full DML on all schemas
 ALTER DEFAULT PRIVILEGES IN SCHEMA patient_data GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO hs_writer;
 ALTER DEFAULT PRIVILEGES IN SCHEMA patient_event_reconciliation GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO hs_writer;

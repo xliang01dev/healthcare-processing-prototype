@@ -1,5 +1,8 @@
 from contextlib import asynccontextmanager
+import faulthandler
+import logging
 import os
+import yaml
 
 from fastapi import FastAPI
 
@@ -8,6 +11,13 @@ from shared.singleton_store import get_singleton, register_singleton, remove_sin
 from patient_data_provider import PatientDataProvider
 from patient_data_service import PatientDataService
 import internal_router as internal
+
+faulthandler.enable()
+
+_logging_config_file = os.getenv("LOG_CONFIG", "shared/custom-logging.yaml")
+with open(_logging_config_file) as f:
+    logging.config.dictConfig(yaml.safe_load(f))
+logger = logging.getLogger(__name__)
 
 _host, _port, _db = os.getenv("POSTGRES_HOST"), os.getenv("POSTGRES_PORT", "5432"), os.getenv("POSTGRES_DB")
 data_provider = PatientDataProvider(
@@ -34,14 +44,16 @@ async def lifespan(_app: FastAPI):
     # Dedicated hydration events (add / update / remove patient records)
     await bus.subscribe("patient.hydrate", _handle_hydration_event)
     # Raw source events — resolve canonical_patient_id, upsert golden record, re-publish to reconcile.{canonical_patient_id}
-    await bus.subscribe("raw.source-a", _handle_source_event)
-    await bus.subscribe("raw.source-b", _handle_source_event)
-    await bus.subscribe("raw.source-c", _handle_source_event)
+    await bus.subscribe("raw.source-medicare", _handle_source_event)
+    await bus.subscribe("raw.source-hospital", _handle_source_event)
+    await bus.subscribe("raw.source-labs", _handle_source_event)
 
+    logger.info("patient-data started")
     yield
     await bus.drain()
     remove_singleton(PatientDataService)
     await data_provider.disconnect()
+    logger.info("patient-data stopped")
 
 
 app = FastAPI(lifespan=lifespan)

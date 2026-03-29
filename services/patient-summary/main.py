@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import logging
 import os
 
 import httpx
@@ -9,6 +10,9 @@ from shared.singleton_store import get_singleton, register_singleton, remove_sin
 from patient_summary_service import PatientSummaryService
 from patient_summary_data_provider import PatientSummaryDataProvider
 import internal_router as internal
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
 
 _host, _port, _db = os.getenv("POSTGRES_HOST"), os.getenv("POSTGRES_PORT", "5432"), os.getenv("POSTGRES_DB")
 data_provider = PatientSummaryDataProvider(
@@ -35,11 +39,13 @@ async def lifespan(_app: FastAPI):
     await bus.connect()
     await data_provider.connect()
     await bus.subscribe("timeline.updated", _handle_timeline_updated)
+    logger.info("patient-summary started")
     yield
     await bus.drain()
     remove_singleton(PatientSummaryService)
     await http_client.aclose()
     await data_provider.disconnect()
+    logger.info("patient-summary stopped")
 
 
 app = FastAPI(lifespan=lifespan)

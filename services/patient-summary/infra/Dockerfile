@@ -20,9 +20,8 @@ COPY ./uv.lock ./uv.lock
 RUN --mount=type=cache,target=/root/.cache/pip \
     uv sync --frozen --no-install-project --no-dev
 
-# Copy service code into /app/service
 COPY ./shared /app/shared
-COPY ./services/patient-summary /app/service
+COPY ./services/patient-summary /app
 
 # Install app
 RUN --mount=type=cache,target=/root/.cache/pip \
@@ -43,4 +42,4 @@ EXPOSE $APP_PORT
 # ENTRYPOINT [ "./entrypoint.sh" ]
 
 # Set workers to 1 when enabling debugpy to avoid issues with multiple. Set multiple workers for parallel process.
-CMD .venv/bin/uvicorn service.main:app --host 0.0.0.0 --port $APP_PORT --workers 1 --timeout-keep-alive 60
+CMD .venv/bin/uvicorn main:app --host 0.0.0.0 --port $APP_PORT --workers 1 --timeout-keep-alive 60
