@@ -1,7 +1,8 @@
 import json
-
 import nats
 
+from typing import Any
+from nats.aio.client import Client as NATS
 
 class MessageBus:
     """
@@ -11,7 +12,7 @@ class MessageBus:
 
     def __init__(self, url: str) -> None:
         self._url = url
-        self._nc = None
+        self._nc: NATS | None = None
 
     async def connect(self) -> None:
         if not self._url:
@@ -22,9 +23,13 @@ class MessageBus:
         assert self._nc is not None, "MessageBus not connected — call connect() first"
         await self._nc.publish(topic, json.dumps(payload).encode())
 
-    async def subscribe(self, topic: str, handler) -> None:
+    async def subscribe(self, topic: str, handler: Any) -> None:
         assert self._nc is not None, "MessageBus not connected — call connect() first"
         await self._nc.subscribe(topic, cb=handler)
+
+    async def flush(self) -> None:
+        assert self._nc is not None, "MessageBus not connected — call connect() first"
+        await self._nc.flush()
 
     async def drain(self) -> None:
         if self._nc is not None:

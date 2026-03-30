@@ -25,7 +25,6 @@ CREATE TABLE IF NOT EXISTS patient_data.golden_records (
     family_name          TEXT,
     date_of_birth        DATE,
     gender               TEXT,
-    payload              JSONB       NOT NULL,
     record_version       BIGINT      NOT NULL DEFAULT 1,
     last_reconciled_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
