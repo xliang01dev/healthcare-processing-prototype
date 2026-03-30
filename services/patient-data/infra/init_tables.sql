@@ -29,3 +29,9 @@ CREATE TABLE IF NOT EXISTS patient_data.golden_records (
     record_version       BIGINT      NOT NULL DEFAULT 1,
     last_reconciled_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+INSERT INTO patient_data.source_systems (source_system_name) VALUES
+    ('Medicare'),
+    ('Hospital'),
+    ('Labs')
+ON CONFLICT DO NOTHING;
