@@ -15,9 +15,11 @@ across sources exercise the reconciliation normalisation logic:
   patient_first_name      — Labs uses a different field name for the same concept
 """
 
-from datetime import date
+from datetime import date, datetime
+from typing import Optional
+from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # ---------------------------------------------------------------------------
@@ -124,3 +126,59 @@ class LabEvent(BaseModel):
     result_value: str           # e.g. "6.5"
     result_unit: str            # e.g. "%", "mg/dL"
     reference_range: str        # e.g. "4.0-5.6"
+
+
+# ---------------------------------------------------------------------------
+# Reconciled Event
+# ---------------------------------------------------------------------------
+
+
+class ReconciledEvent(BaseModel):
+    """
+    Denormalized snapshot of patient's current clinical and insurance state after reconciliation.
+
+    Each resolved_event row captures the complete state of a patient at a point in time
+    across Medicare, Hospital, and Lab systems. Forms a timeline of how patient state evolved.
+    """
+    id: int = Field(description="Primary key")
+    canonical_patient_id: UUID = Field(description="Patient UUID")
+    event_log_ids: list[int] = Field(description="IDs of all event_logs reconciled in this window")
+    event_processing_start: datetime = Field(description="When debounce window opened")
+    event_processing_end: datetime = Field(description="When reconciliation was triggered/completed")
+
+    # Demographics (normalized, can override golden_record)
+    first_name: Optional[str] = Field(None, description="Patient first name (normalized to mixed-case)")
+    last_name: Optional[str] = Field(None, description="Patient last name (normalized to mixed-case)")
+    gender: Optional[str] = Field(None, description="Patient gender (M or F, normalized)")
+
+    # Insurance & Coverage
+    primary_plan: Optional[str] = Field(None, description="Primary insurance plan name")
+    member_id: Optional[str] = Field(None, description="Insurance member ID")
+    eligibility_status: Optional[str] = Field(None, description="active, terminated, suspended")
+    network_status: Optional[str] = Field(None, description="in-network, out-of-network")
+    authorization_required: Optional[bool] = Field(None, description="Whether prior auth is required")
+    authorization_status: Optional[str] = Field(None, description="Authorization approval status")
+
+    # Current Encounter
+    admission_date: Optional[datetime] = Field(None, description="Hospital admission date")
+    discharge_date: Optional[datetime] = Field(None, description="Hospital discharge date")
+    facility_name: Optional[str] = Field(None, description="Hospital or lab facility name")
+    attending_physician: Optional[str] = Field(None, description="Responsible physician")
+    encounter_status: Optional[str] = Field(None, description="active, discharged, pending")
+
+    # Clinical - searchable text arrays
+    diagnosis_codes: list[str] = Field(default_factory=list, description="ICD diagnosis codes")
+    active_diagnoses: list[str] = Field(default_factory=list, description="Active diagnosis descriptions")
+    procedures: list[str] = Field(default_factory=list, description="Procedure codes and descriptions")
+    medications: list[str] = Field(default_factory=list, description="Current medication names")
+    allergies: list[str] = Field(default_factory=list, description="Drug/food allergies")
+    lab_results: list[str] = Field(default_factory=list, description="Lab test names and values")
+    care_team: list[str] = Field(default_factory=list, description="Provider names on care team")
+    scheduled_followups: list[str] = Field(default_factory=list, description="Scheduled appointments and referrals")
+    quality_flags: list[str] = Field(default_factory=list, description="Risk flags, complications, adverse events")
+
+    # Unstructured
+    clinical_notes: Optional[str] = Field(None, description="Provider narrative notes")
+    resolution_log: str = Field(description="How conflicts were resolved during reconciliation")
+    created_at: datetime = Field(description="When this reconciliation was created")
+

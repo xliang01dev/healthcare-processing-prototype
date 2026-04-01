@@ -2,11 +2,12 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from patient_event_models import EventLog, ReconciledEvent
+from patient_event_models import EventLog
 from shared.event_models import (
     MedicareEvent,
     HospitalEvent,
-    LabEvent
+    LabEvent,
+    ReconciledEvent
 )
 
 class PatientEventReconciliationRules:

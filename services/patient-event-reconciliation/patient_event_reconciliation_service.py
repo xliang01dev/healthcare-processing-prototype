@@ -2,7 +2,6 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 
-from patient_event_models import EventLog, PendingPublish
 from patient_event_reconciliation_data_provider import PatientEventReconciliationDataProvider
 from patient_event_reconciliation_rules import PatientEventReconciliationRules
 from shared.message_bus import MessageBus
@@ -64,11 +63,12 @@ class PatientEventReconciliationService:
                     to_event_log_id=pending_publish.last_event_log_id
                 )
 
-                recondiled_event = await self.reconciliation_rules.reconcile_events(event_logs)
-                if recondiled_event:
+                reconciled_event = await self.reconciliation_rules.reconcile_events(event_logs)
+                # Can update golden record too
+                if reconciled_event:
                     await self.bus.publish(
                         topic="reconcile.events",
-                        data=recondiled_event
+                        data=reconciled_event
                     )
 
         # Create a new debounce window if there isn't one or if we're outside the existing debounce window

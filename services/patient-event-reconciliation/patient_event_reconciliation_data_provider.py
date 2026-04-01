@@ -1,7 +1,7 @@
 import json
 import logging
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from shared.data_provider import DataProvider
 from patient_event_models import EventLog, PendingPublish
 
