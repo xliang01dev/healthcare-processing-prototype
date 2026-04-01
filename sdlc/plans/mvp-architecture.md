@@ -15,7 +15,7 @@ This is a hypothesis/learning project. No real patient data is used.
 - Idempotency is enforced via a stable `message-id` on every inbound event — see Section 2.
 - **Patient Data Service** merges MPI identity resolution and golden record construction into a single service. It publishes to `reconcile.{canonical_patient_id}` after upsert — no synchronous HTTP call from reconciliation to resolve identity.
 - Reconciliation is a first-class concern — handled by a dedicated service, not bolted onto ingestion.
-- **Debounce is owned by Patient Event Reconciliation** — not Timeline. Reconciliation accumulates events into `event_logs`, manages a `pending_publish` debounce window, then publishes `reconciled.events` when the window expires.
+- **Debounce is owned by Patient Event Reconciliation** — not Timeline. Reconciliation accumulates events into `event_logs`, manages a `pending_publish_debouncer` debounce window, then publishes `reconciled.events` when the window expires.
 - **Risk stratification is LLM-driven** — the LLM receives a patient summary and returns a structured risk assessment.
 - LLM is inserted post-reconciliation so it always operates on the cleanest available timeline.
 - **No UI in scope.** Backend services only.
@@ -151,9 +151,9 @@ Every message published to the broker carries a stable `message-id`. This is the
 
 **How it works:**
 1. The Ingestion Gateway assigns a `message-id` derived deterministically from the source record's own identifier: `sha256(source_id + version + source_system)`.
-2. Before processing, Patient Event Reconciliation checks whether `message_id` already exists in `patient_event_reconciliation.processed_messages`.
+2. Before processing, Patient Event Reconciliation checks whether `message_id` already exists in `patient_event_reconciliation.event_logs`.
 3. If found: skip processing, acknowledge the message.
-4. If new: process, record the `message_id`.
+4. If new: insert into `event_logs` (which records the `message_id` as processed) and continue with reconciliation logic.
 
 ### Identity Resolution — Patient Data Service
 
@@ -263,7 +263,7 @@ A patient timeline is a longitudinal, deduplicated, chronologically ordered sequ
 ### Construction Steps
 
 1. Patient Data Service resolves `canonical_patient_id` and publishes `reconcile.{canonical_patient_id}`.
-2. Patient Event Reconciliation receives the event, appends to `event_logs`, and upserts `pending_publish` to reset the debounce window.
+2. Patient Event Reconciliation receives the event, appends to `event_logs`, and upserts `pending_publish_debouncer` to reset the debounce window.
 3. When the debounce window expires, Patient Event Reconciliation applies versioning, deduplication, and void handling across the `event_logs` window, writes the merged result to `resolved_events`, and publishes `reconciled.events`.
 4. Patient Timeline Service receives `reconciled.events`, calls `REFRESH MATERIALIZED VIEW CONCURRENTLY patient_timeline`, and publishes `timeline.updated` after the refresh completes (refresh-then-publish).
 5. Patient Summary Service receives `timeline.updated`, fetches the patient's timeline via the Patient Timeline internal API, fetches the golden record via the Patient Data internal API, and runs LLM assessment.
@@ -284,7 +284,7 @@ CREATE TABLE patient_timeline.timeline_events (
   canonical_patient_id  UUID NOT NULL,
   event_type            TEXT,
   payload               JSONB,
-  occurred_at           TIMESTAMPTZ,
+  source_system_event_at           TIMESTAMPTZ,
   source_system_id      BIGINT,  -- plain value, no FK (cross-schema)
   created_at            TIMESTAMPTZ DEFAULT NOW()
 );
@@ -293,7 +293,7 @@ CREATE TABLE patient_timeline.timeline_events (
 CREATE MATERIALIZED VIEW patient_timeline.patient_timeline AS
   SELECT canonical_patient_id, ...
   FROM patient_timeline.timeline_events
-  ORDER BY occurred_at;
+  ORDER BY source_system_event_at;
 
 -- Required for CONCURRENT refresh
 CREATE UNIQUE INDEX patient_timeline_unique_idx ON patient_timeline.patient_timeline (id);
@@ -311,7 +311,7 @@ CREATE UNIQUE INDEX patient_timeline_unique_idx ON patient_timeline.patient_time
 
 Raw events from multiple sources arrive in rapid succession (e.g. a Source C nightly batch export sends dozens of records for the same patient). Running the full reconciliation pipeline — and triggering an LLM assessment — on every individual event would be wasteful. Only the final settled state matters.
 
-Patient Event Reconciliation owns the debounce. It accumulates events into an append-only `event_logs` table, maintains a `pending_publish` row per patient to track the debounce window, and publishes `reconciled.events` only once the window expires.
+Patient Event Reconciliation owns the debounce. It accumulates events into an append-only `event_logs` table and maintains a rolling `pending_publish_debouncer` audit table. Each active window tracks the range of events to be reconciled via `first_event_log_id` (immutable, set when the window starts) and `last_event_log_id` (mutable, advances with each incoming event). When the debounce window expires (or `ceiling_at` is reached), all events in the range `[first_event_log_id, last_event_log_id]` are reconciled together into a single merged record, which is written to `resolved_events` and published downstream.
 
 `event_logs` also serves as a **NATS persistence substitute** — because NATS core does not store messages, events are written to `event_logs` on receipt so they can be processed even if the reconciliation worker restarts mid-window.
 
@@ -326,24 +326,27 @@ CREATE TABLE patient_event_reconciliation.event_logs (
   message_id            TEXT NOT NULL,
   event_type            TEXT NOT NULL,
   payload               JSONB NOT NULL,
-  occurred_at           TIMESTAMPTZ,
+  source_system_event_at           TIMESTAMPTZ,
   created_at            TIMESTAMPTZ DEFAULT NOW()
 );
 
--- One active row per patient during a debounce window
-CREATE TABLE patient_event_reconciliation.pending_publish (
+-- Rolling audit table: one row per debounce window (active or historical).
+-- Active windows have published_at IS NULL. Historical windows have published_at set.
+-- Tracks the range of event_logs [first_event_log_id, last_event_log_id] that belong to each debounce window.
+CREATE TABLE patient_event_reconciliation.pending_publish_debouncer (
   id                    BIGSERIAL PRIMARY KEY,
   canonical_patient_id  UUID NOT NULL,
-  last_event_log_id     BIGINT NOT NULL REFERENCES event_logs(id),
-  scheduled_after       TIMESTAMPTZ NOT NULL,  -- resets on each new event (debounce)
+  first_event_log_id    BIGINT NOT NULL REFERENCES event_logs(id),  -- set on INSERT, immutable; marks window start
+  last_event_log_id     BIGINT NOT NULL REFERENCES event_logs(id),  -- updated as new events arrive; marks window end
+  scheduled_after       TIMESTAMPTZ NOT NULL,  -- resets on each new event (debounce timer)
   ceiling_at            TIMESTAMPTZ NOT NULL,  -- hard deadline — never moves forward
-  published_at          TIMESTAMPTZ,           -- NULL = active window; NOT NULL = closed
+  published_at          TIMESTAMPTZ,           -- NULL = active window; NOT NULL = closed/historical
   updated_at            TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Fast lookup for active windows only
-CREATE INDEX pending_publish_active_idx
-  ON pending_publish (canonical_patient_id, last_event_log_id)
+-- Fast lookup for active (unpublished) debounce windows only
+CREATE INDEX pending_publish_debouncer_active_idx
+  ON pending_publish_debouncer (canonical_patient_id)
   WHERE published_at IS NULL;
 
 -- Final merged output per debounce window
@@ -355,7 +358,7 @@ CREATE TABLE patient_event_reconciliation.resolved_events (
   to_event_log_id       BIGINT NOT NULL REFERENCES event_logs(id),
   payload               JSONB NOT NULL,
   resolution_log        TEXT,  -- why the payload was resolved as it was
-  occurred_at           TIMESTAMPTZ,
+  source_system_event_at           TIMESTAMPTZ,
   created_at            TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -368,26 +371,26 @@ CREATE TABLE patient_event_reconciliation.reconciliation_conflicts (
   details               JSONB,
   created_at            TIMESTAMPTZ DEFAULT NOW()
 );
-
--- Idempotency table
-CREATE TABLE patient_event_reconciliation.processed_messages (
-  message_id            TEXT PRIMARY KEY,
-  processed_at          TIMESTAMPTZ DEFAULT NOW()
-);
 ```
+
+**Note on idempotency:** The `message_id` field in `event_logs` serves as the idempotency check. Before processing a message, check if its `message_id` exists in `event_logs`. If found, the message was already processed; if not found, insert and process. No separate idempotency table needed.
 
 ### Debounce Rules
 
 | Condition | Action |
 |---|---|
-| New event arrives, no active window | Insert `pending_publish` with `scheduled_after = NOW() + window`, `ceiling_at = NOW() + hard_deadline` |
-| New event arrives, active window exists, `scheduled_after` not yet expired | Update `scheduled_after = NOW() + window` (reset debounce); `ceiling_at` never moves |
-| New event arrives after `ceiling_at` (past hard deadline) | `published_at IS NULL` but expired at ceiling — treat as settled; reconcile and publish |
-| Debounce window expires (`scheduled_after ≤ NOW()`) | Reconcile `event_logs` for this window; write `resolved_events`; publish `reconciled.events`; set `published_at = NOW()` |
+| **Rule 1: New event, no active window** | INSERT `pending_publish_debouncer` with `first_event_log_id = event_log_id`, `last_event_log_id = event_log_id`, `scheduled_after = NOW() + window`, `ceiling_at = NOW() + hard_deadline` |
+| **Rule 2: New event, active window, within debounce** | UPDATE active window: `last_event_log_id = event_log_id`, `scheduled_after = NOW() + window` (reset timer); `first_event_log_id` and `ceiling_at` immutable |
+| **Rule 3: New event, active window, after ceiling_at** | Close the old window (set `published_at = NOW()`); reconcile range `[first_event_log_id, last_event_log_id]`; INSERT new `pending_publish_debouncer` row for the new event (Rule 1) |
+| **Rule 4: Debounce expires (`scheduled_after ≤ NOW()`)** | Close window: `published_at = NOW()`; Reconcile all `event_logs` in range `[first_event_log_id, last_event_log_id]`; Write merged result to `resolved_events` with range metadata; Publish `reconciled.events` |
 
-Rows with `published_at IS NOT NULL` are historical records kept for auditing. The partial index
-on `WHERE published_at IS NULL` ensures active-window lookups remain fast regardless of
-historical row accumulation.
+**Design rationale:** The `pending_publish_debouncer` table is a rolling audit log. Each row represents one debounce window:
+- `first_event_log_id` captures the START of the window (immutable, set on INSERT)
+- `last_event_log_id` tracks the END as new events arrive (mutable)
+- When the window expires or exceeds `ceiling_at`, we have the exact range `[first, last]` to reconcile
+- Historical rows (where `published_at IS NOT NULL`) are kept for full audit trail
+
+The partial index on `WHERE published_at IS NULL` ensures active-window lookups remain fast regardless of historical row accumulation.
 
 ### Internal API
 
@@ -498,7 +501,7 @@ CREATE TABLE patient_summary.recommendations (
 |---|---|---|
 | Ingestion Gateway | Accepts raw events from Source A, B, C. Parses to internal JSON. Assigns `message-id`. Publishes to `raw.*` topics via `MessageBus`. **FastAPI + Docker.** | 8001 |
 | Patient Data Service | Resolves patient identity atomically across sources. Upserts `patients`, `source_identities`, `golden_records`. Publishes to `reconcile.{canonical_patient_id}`. Exposes `/internal/patient/{id}/golden-record`. | 8002 |
-| Patient Event Reconciliation | Consumes `reconcile.*`. Enforces idempotency via `processed_messages`. Appends to `event_logs`. Manages `pending_publish` debounce window. On window expiry: applies versioning, deduplication, void handling; writes `resolved_events`; publishes `reconciled.events`. Exposes `/internal/patient/{id}/conflicts`. | 8003 |
+| Patient Event Reconciliation | Consumes `reconcile.*`. Enforces idempotency via `event_logs.message_id`. Appends to `event_logs`. Manages `pending_publish_debouncer` debounce window. On window expiry: applies versioning, deduplication, void handling; writes `resolved_events`; publishes `reconciled.events`. Exposes `/internal/patient/{id}/conflicts`. | 8003 |
 | Patient Timeline Service | Consumes `reconciled.events`. Calls `REFRESH MATERIALIZED VIEW CONCURRENTLY patient_timeline`. Publishes `timeline.updated` after refresh completes. Exposes `/internal/patient/timeline`. | 8004 |
 | Patient Summary Service | Subscribes to `timeline.updated`. Fetches timeline via Patient Timeline API and golden record via Patient Data API. Builds versioned prompt. Calls LLM backend. Applies deduplication. Writes to `recommendations`. Publishes `risk.computed`. Cron batch runs nightly. | 8005 |
 | Notification Service | Consumes `risk.computed`. Routes alerts for High/Critical risk patients (console log in POC). | 8006 |
@@ -546,7 +549,7 @@ flowchart TD
     end
 
     subgraph Reconciliation Layer
-        RE[Patient Event Reconciliation\nIdempotency via processed_messages\nAppend to event_logs\npending_publish debounce\nVersioning + deduplication\nPublish reconciled.events]
+        RE[Patient Event Reconciliation\nIdempotency via event_logs.message_id\nAppend to event_logs\npending_publish_debouncer debounce\nVersioning + deduplication\nPublish reconciled.events]
     end
 
     subgraph Timeline Layer
@@ -602,7 +605,7 @@ flowchart TD
 
 ### Phase 2: Reconciliation and Timeline
 
-6. Implement Patient Event Reconciliation. Consume `reconcile.*`. Idempotency check. Append `event_logs`. Upsert `pending_publish` debounce window. On expiry: merge, write `resolved_events`, publish `reconciled.events`.
+6. Implement Patient Event Reconciliation. Consume `reconcile.*`. Idempotency check. Append `event_logs`. Upsert `pending_publish_debouncer` debounce window. On expiry: merge, write `resolved_events`, publish `reconciled.events`.
 7. Implement Patient Timeline Service. Consume `reconciled.events`. Refresh materialized view. Publish `timeline.updated`. Expose timeline internal API.
 
 ### Phase 3: LLM Risk and Summary

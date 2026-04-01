@@ -59,10 +59,12 @@ class PatientDataService:
         source_system_name = data.get("source_system")
         handler = self.handlers.get(source_system_name)
         canonical_patient_id = await handler(data)
+        # Update data with canonical_patient_id for downstream processing and reconciliation
+        data["canonical_patient_id"] = canonical_patient_id
 
         try:
             await self.bus.publish(
-                topic=f"reconcile.{canonical_patient_id}",
+                topic=f"reconcile.{source_system_name.lower()}",
                 payload=data
             )
             await self.bus.flush()
