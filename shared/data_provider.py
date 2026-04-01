@@ -1,4 +1,5 @@
 import asyncpg
+from typing import Any, cast
 
 
 class DataProvider:
@@ -52,11 +53,11 @@ class DataProvider:
     # Reader helpers — always route through the read-only pool
     # ------------------------------------------------------------------
 
-    async def fetch(self, sql: str, *args) -> list[asyncpg.Record]:
+    async def fetch(self, sql: str, *args: Any) -> list[asyncpg.Record] | None:
         assert self._reader is not None, "DataProvider not connected — call connect() first"
         return await self._reader.fetch(sql, *args)
 
-    async def fetchrow(self, sql: str, *args) -> asyncpg.Record | None:
+    async def fetchrow(self, sql: str, *args: Any) -> asyncpg.Record | None:
         assert self._reader is not None, "DataProvider not connected — call connect() first"
         return await self._reader.fetchrow(sql, *args)
 
@@ -64,10 +65,10 @@ class DataProvider:
     # Writer helpers — always route through the read-write pool
     # ------------------------------------------------------------------
 
-    async def execute(self, sql: str, *args) -> str:
+    async def execute(self, sql: str, *args: Any) -> Any:
         assert self._writer is not None, "DataProvider not connected — call connect() first"
         return await self._writer.execute(sql, *args)
 
-    async def executemany(self, sql: str, args_seq) -> None:
+    async def executemany(self, sql: str, args_seq: Any) -> None:
         assert self._writer is not None, "DataProvider not connected — call connect() first"
         await self._writer.executemany(sql, args_seq)
