@@ -17,3 +17,17 @@ async def get_golden_record(canonical_patient_id: str):
     if record is None:
         raise HTTPException(status_code=404, detail="Golden record not found")
     return record
+
+
+@router.get("/internal/patient/resolve")
+async def resolve_medicare_id(medicare_id: str):
+    """Resolve medicare_id to canonical_patient_id."""
+    logger.info("GET /internal/patient/resolve medicare_id=%s", medicare_id)
+    service = get_singleton(PatientDataService)
+    
+    patient_info = await service.data_provider.fetch_patient(medicare_id)
+    canonical_patient_id = patient_info.canonical_patient_id
+
+    if canonical_patient_id is None:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    return {"canonical_patient_id": canonical_patient_id}

@@ -1,8 +1,15 @@
+from datetime import date, datetime
+from uuid import UUID
+
 from pydantic import BaseModel
 
 
 class PatientInfoResponse(BaseModel):
-    stub: bool = True
+    medicare_id: str | None = None
+    given_name: str | None = None
+    family_name: str | None = None
+    date_of_birth: date | None = None
+    gender: str | None = None
 
 
 class TimelineResponse(BaseModel):

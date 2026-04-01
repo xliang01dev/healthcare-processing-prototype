@@ -19,9 +19,9 @@ class NPIDataProvider(DataProvider):
         sql = """
             SELECT npi, first_name, last_name, title, specialty
             FROM npi_registry.providers
-            WHERE npi = %s
+            WHERE npi = $1
         """
-        row = await self.fetchrow(sql, npi)
+        row = await self.fetch_row(sql, npi)
 
         if row:
             return Provider(
@@ -40,9 +40,9 @@ class NPIDataProvider(DataProvider):
             SELECT npi, first_name, last_name, title, specialty
             FROM npi_registry.providers
             ORDER BY last_name, first_name
-            LIMIT %s OFFSET %s
+            LIMIT $1 OFFSET $2
         """
-        rows = await self.fetch(sql, limit, offset)
+        rows = await self.fetch_rows(sql, limit, offset)
 
         return [
             Provider(

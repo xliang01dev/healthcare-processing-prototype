@@ -13,10 +13,6 @@ class TimelineService:
         self.data_provider = data_provider
         self.bus = bus
 
-    async def fetch_latest_patient_timeline(self, canonical_patient_id: str) -> dict | None:
-        logger.info("fetch_latest_patient_timeline: canonical_patient_id=%s", canonical_patient_id)
-        return await self.data_provider.fetch_latest_patient_timeline(canonical_patient_id)
-
     async def fetch_patient_timeline(self, canonical_patient_id: str, page: int, page_size: int) -> list:
         logger.info("fetch_patient_timeline: canonical_patient_id=%s page=%s page_size=%s", canonical_patient_id, page, page_size)
         return await self.data_provider.fetch_patient_timeline(canonical_patient_id, page, page_size)
@@ -37,7 +33,7 @@ class TimelineService:
         # Publish timeline.updated event
         await self.bus.publish(
             topic="timeline.updated",
-            data=reconciled_event.model_dump_json()
+            payload=reconciled_event.model_dump_json()
         )
 
         logger.info("handle_reconciled_event: published timeline.updated for canonical_patient_id=%s", reconciled_event.canonical_patient_id)

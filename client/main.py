@@ -1,16 +1,15 @@
 """
-Healthcare Event Emitter — interactive terminal client.
+Patient Data Query Client — interactive terminal client.
 
-Publishes synthetic patient events directly onto the NATS message bus,
-bypassing the Ingestion Gateway. Use this to seed the pipeline during
-local development without needing real source system integrations.
+Queries patient data from the Patient API.
+Submits synthetic patient events to the Ingestion Gateway.
 
 Usage:
-    python client/main.py                       # default: nats://localhost:4222
-    python client/main.py nats://localhost:4222
+    python client/main.py                                   # defaults
+    python client/main.py http://localhost:8001 http://localhost:8002  # custom urls
 
 Dependencies (install via project venv):
-    nats-py>=2.7    pydantic>=2.6
+    httpx>=0.24    pydantic>=2.6
 """
 
 import asyncio
@@ -20,24 +19,26 @@ import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-import nats.errors
+import httpx
 
-from emitter import Emitter
+from typing import Any
+from api_client import APIClient
 from factory import PATIENTS, build, build_random
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
-DEFAULT_NATS_URL = "nats://localhost:4222"
+DEFAULT_GATEWAY_URL = "http://localhost:8001"
+DEFAULT_PATIENT_API_URL = "http://localhost:8000"
 
 _DIVIDER = "─" * 52
 
 _SOURCE_LABELS = {
-    "h": ("Hydrate patient",  "patient.hydrate"),
-    "m": ("Medicare",         "raw.source-medicare"),
-    "b": ("Hospital",         "raw.source-hospital"),
-    "l": ("Labs",             "raw.source-labs"),
+    "h": ("Hydrate",          "POST /hydrate"),
+    "m": ("Medicare",         "POST /ingest"),
+    "b": ("Hospital",         "POST /ingest"),
+    "l": ("Labs",             "POST /ingest"),
 }
 
 # ---------------------------------------------------------------------------
@@ -48,26 +49,29 @@ def _patient_label(p: dict) -> str:
     return f"{p['first_name']} {p['last_name']}  ({p['medicare_id']})"
 
 
-def _print_menu(patient: dict, nats_url: str) -> None:
+def _print_menu(patient: dict) -> None:
     print(f"\n{_DIVIDER}")
-    print("  Healthcare Event Emitter")
-    print(f"  NATS: {nats_url}")
+    print("  Patient Data Query Client")
     print(_DIVIDER)
     print(f"  Patient: {_patient_label(patient)}")
+    print()
+    print(f"  [f]  Fetch patient info")
     print()
     for key, (label, topic) in _SOURCE_LABELS.items():
         print(f"  [{key}]  {label:<20} {topic}")
     print()
     print(f"  [r]  Random event")
     print(f"  [p]  Pick patient")
+    print()
     print(f"  [q]  Quit")
     print(_DIVIDER)
 
 
-def _print_success(subject: str, event) -> None:
+def _print_success(subject: str, event: Any) -> None:
     payload = event.model_dump(mode="json")
     pretty = json.dumps(payload, indent=4, default=str)
-    print(f"\n  ✓  Published → {subject}")
+    print(f"\n  ✓  Submitted to Ingestion Gateway")
+    print(f"     source : {subject}")
     print(f"     event_type : {payload.get('event_type', 'patient_hydrate')}")
     if "message_id" in payload:
         print(f"     message_id : {payload['message_id'][:16]}...")
@@ -78,7 +82,18 @@ def _print_success(subject: str, event) -> None:
     print()
 
 
-def _print_patient_picker(current: dict) -> dict:
+def _print_golden_record(record: dict[str, Any]) -> None:
+    """Display patient info in a readable format."""
+    print(f"\n{_DIVIDER}")
+    print("  Patient Info")
+    print(_DIVIDER)
+    pretty = json.dumps(record, indent=4, default=str)
+    for line in pretty.splitlines():
+        print(f"     {line}")
+    print()
+
+
+def _print_patient_picker(current: dict[str, Any]) -> dict:
     print(f"\n{_DIVIDER}")
     print("  Select patient:")
     print()
@@ -99,12 +114,15 @@ def _print_patient_picker(current: dict) -> dict:
 # Main loop
 # ---------------------------------------------------------------------------
 
-async def run(nats_url: str) -> None:
-    emitter = Emitter(nats_url)
+async def run(gateway_url: str, patient_api_url: str) -> None:
+    client = APIClient(patient_api_url, gateway_url)
+
     try:
-        await emitter.connect()
-    except nats.errors.NoServersError:
-        print(f"\n  ✗  Could not connect to NATS at {nats_url}")
+        await client.connect()
+    except httpx.ConnectError:
+        print(f"\n  ✗  Could not connect to services")
+        print(f"     Gateway: {gateway_url}")
+        print(f"     Patient API: {patient_api_url}")
         print("     Is the stack running?  docker-compose up\n")
         return
 
@@ -112,7 +130,7 @@ async def run(nats_url: str) -> None:
 
     try:
         while True:
-            _print_menu(patient, nats_url)
+            _print_menu(patient)
             choice = input("  Choice: ").strip().lower()
 
             if choice == "q":
@@ -121,27 +139,35 @@ async def run(nats_url: str) -> None:
             elif choice == "p":
                 patient = _print_patient_picker(patient)
 
+            elif choice == "f":
+                record = await client.fetch_golden_record(patient["medicare_id"])
+                if record:
+                    _print_golden_record(record)
+                else:
+                    print(f"\n  ✗  Could not fetch patient info for {patient['medicare_id']}\n")
+
             elif choice == "r":
                 subject, event = build_random(patient)
-                await emitter.publish(subject, event.model_dump(mode="json"))
+                await client.submit_event(subject, event.model_dump(mode="json"))
                 _print_success(subject, event)
 
             elif choice in _SOURCE_LABELS:
                 subject, event = build(choice, patient)
-                await emitter.publish(subject, event.model_dump(mode="json"))
+                await client.submit_event(subject, event.model_dump(mode="json"))
                 _print_success(subject, event)
 
             else:
                 print("\n  Unknown choice — try again.\n")
 
     finally:
-        await emitter.close()
+        await client.close()
         print("  Disconnected.\n")
 
 
 def main() -> None:
-    url = sys.argv[1] if len(sys.argv) > 1 else os.getenv("NATS_URL", DEFAULT_NATS_URL)
-    asyncio.run(run(url))
+    gateway_url = sys.argv[1] if len(sys.argv) > 1 else os.getenv("GATEWAY_URL", DEFAULT_GATEWAY_URL)
+    patient_api_url = sys.argv[2] if len(sys.argv) > 2 else os.getenv("PATIENT_API_URL", DEFAULT_PATIENT_API_URL)
+    asyncio.run(run(gateway_url, patient_api_url))
 
 
 if __name__ == "__main__":

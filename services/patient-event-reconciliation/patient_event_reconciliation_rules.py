@@ -1,4 +1,6 @@
 from typing import Optional
+from datetime import datetime, timezone
+from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -45,15 +47,15 @@ class PatientEventReconciliationRules:
             return None
 
         event_models = [self._convert_event_log_to_model(event_log) for event_log in event_logs]
-        return self._apply_reconciliation_logic(canonical_patient_id, event_models)
+        return self._apply_reconciliation_logic(canonical_patient_id, event_models, event_logs)
 
     def _convert_event_log_to_model(self, event_log: EventLog) -> BaseModel:
         """Convert raw event_logs payload into typed source system model."""
-        if event_log.source_system_id == "Medicare":
+        if event_log.source_system_id == 1: # Medicare
             return MedicareEvent.model_validate(event_log.payload)
-        elif event_log.source_system_id == "Hospital":
+        elif event_log.source_system_id == 2: # Hospital
             return HospitalEvent.model_validate(event_log.payload)
-        elif event_log.source_system_id == "Labs":
+        elif event_log.source_system_id == 3: # Labs
             return LabEvent.model_validate(event_log.payload)
         else:
             raise ValueError(f"Unknown source_system_id: {event_log.source_system_id}")
@@ -61,7 +63,8 @@ class PatientEventReconciliationRules:
     def _apply_reconciliation_logic(
             self,
             canonical_patient_id: str,
-            events: list[BaseModel]
+            events: list[BaseModel],
+            event_logs: list[EventLog]
     ) -> ReconciledEvent:
         """
         Apply reconciliation rules to produce a single ReconciledEvent.
@@ -73,7 +76,17 @@ class PatientEventReconciliationRules:
         4. Normalization: Hospital names (UPPERCASE) and gender ("Male"/"Female") normalized
         5. Names: Use first non-null value (Medicare > Hospital > Lab, after normalization)
         """
-        reconciled = ReconciledEvent(canonical_patient_id=canonical_patient_id)
+        event_log_ids = [log.id for log in event_logs]
+        event_processing_start = event_logs[0].created_at if event_logs else datetime.now(timezone.utc)
+
+        reconciled = ReconciledEvent(
+            id=0,  # Will be assigned by database on insert
+            canonical_patient_id=canonical_patient_id,
+            event_log_ids=event_log_ids,
+            event_processing_start=event_processing_start,
+            event_processing_end=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc)
+        )
 
         # Accumulate lab results for later
         lab_results_list = []

@@ -26,8 +26,7 @@ class PatientEventReconciliationService:
 
     async def handle_reconcile_event(self, msg) -> None:
         logger.info("handle_reconcile_event: subject=%s data=%s", msg.subject, msg.data)
-        json_data = json.loads(msg.data.decode()
-                               )
+        json_data = json.loads(msg.data.decode())
         message_id = json_data.get("message_id")
         
         # Check idempotency: if event_log already exists for this message_id, skip.
@@ -35,9 +34,7 @@ class PatientEventReconciliationService:
             logger.info("Message %s already processed, skipping", message_id)
             return
         
-        source_system = json_data.get("source_system")
         canonical_patient_id = json_data.get("canonical_patient_id")
-        
         # Insert event log before reconciliation
         event_log_id = await self.data_provider.insert_event_log(json_data)
         current_time = datetime.now(timezone.utc)
@@ -62,13 +59,15 @@ class PatientEventReconciliationService:
                     from_event_log_id=pending_publish.first_event_log_id,
                     to_event_log_id=pending_publish.last_event_log_id
                 )
-
-                reconciled_event = await self.reconciliation_rules.reconcile_events(event_logs)
+                reconciled_event = await self.reconciliation_rules.reconcile_events(
+                    canonical_patient_id=canonical_patient_id,
+                    event_logs=event_logs
+                )
                 # Can update golden record too
                 if reconciled_event:
                     await self.bus.publish(
-                        topic="reconcile.events",
-                        data=reconciled_event
+                        topic="reconciled.events",
+                        payload=reconciled_event.model_dump_json()
                     )
 
         # Create a new debounce window if there isn't one or if we're outside the existing debounce window

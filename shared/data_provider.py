@@ -53,11 +53,11 @@ class DataProvider:
     # Reader helpers — always route through the read-only pool
     # ------------------------------------------------------------------
 
-    async def fetch(self, sql: str, *args: Any) -> list[asyncpg.Record] | None:
+    async def fetch_rows(self, sql: str, *args: Any) -> list[asyncpg.Record]:
         assert self._reader is not None, "DataProvider not connected — call connect() first"
         return await self._reader.fetch(sql, *args)
 
-    async def fetchrow(self, sql: str, *args: Any) -> asyncpg.Record | None:
+    async def fetch_row(self, sql: str, *args: Any) -> asyncpg.Record | None:
         assert self._reader is not None, "DataProvider not connected — call connect() first"
         return await self._reader.fetchrow(sql, *args)
 
@@ -69,6 +69,11 @@ class DataProvider:
         assert self._writer is not None, "DataProvider not connected — call connect() first"
         return await self._writer.execute(sql, *args)
 
-    async def executemany(self, sql: str, args_seq: Any) -> None:
+    async def execute_many(self, sql: str, args_seq: Any) -> None:
         assert self._writer is not None, "DataProvider not connected — call connect() first"
         await self._writer.executemany(sql, args_seq)
+
+    async def execute_returning(self, sql: str, *args: Any) -> asyncpg.Record | None:
+        """Execute a statement with RETURNING clause (e.g., INSERT ... RETURNING)."""
+        assert self._writer is not None, "DataProvider not connected — call connect() first"
+        return await self._writer.fetchrow(sql, *args)

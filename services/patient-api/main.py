@@ -9,8 +9,8 @@ import httpx
 from fastapi import FastAPI
 
 from shared.singleton_store import register_singleton, remove_singleton
-from patient_service_coordinator import PatientServiceCoordinator
-import patients_router as patients
+from patient_coordinator_service import PatientCoordinatorService
+from patient_coordinator_router import router
 
 faulthandler.enable()
 
@@ -20,7 +20,7 @@ with open(_logging_config_file) as f:
 logger = logging.getLogger(__name__)
 
 http_client = httpx.AsyncClient()
-register_singleton(PatientServiceCoordinator, PatientServiceCoordinator(
+register_singleton(PatientCoordinatorService, PatientCoordinatorService(
     http_client=http_client,
     patient_data_url=os.getenv("PATIENT_DATA_URL", ""),
     reconciliation_url=os.getenv("RECONCILIATION_URL", ""),
@@ -34,13 +34,13 @@ async def lifespan(_app: FastAPI):
     # No NATS, no asyncpg — reads via downstream service calls only.
     logger.info("patient-api started")
     yield
-    remove_singleton(PatientServiceCoordinator)
+    remove_singleton(PatientCoordinatorService)
     await http_client.aclose()
     logger.info("patient-api stopped")
 
 
 app = FastAPI(lifespan=lifespan)
-app.include_router(patients.router)
+app.include_router(router)
 
 
 @app.get("/health")

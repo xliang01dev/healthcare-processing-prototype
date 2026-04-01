@@ -41,8 +41,9 @@ class MedicareEvent(BaseModel):
     # Envelope
     message_id: str
     source_system: str = "Medicare"
-    source_patient_id: str      # medicare_id — source's own patient identifier
-    event_type: str             # "medicare_enrollment" | "medicare_claims" | "hcc_risk_score_update"
+    source_patient_id: str           # medicare_id — source's own patient identifier
+    event_type: str                  # "medicare_enrollment" | "medicare_claims" | "hcc_risk_score_update"
+    occurred_at: datetime            # when event occurred in Medicare system
 
     # 10 clinical fields
     medicare_id: str            # shared anchor — same value used by Hospital and Labs
@@ -76,8 +77,9 @@ class HospitalEvent(BaseModel):
     # Envelope
     message_id: str
     source_system: str = "Hospital"
-    source_patient_id: str      # hospital MRN — Hospital's own patient identifier
-    event_type: str             # "hospital_encounter" | "emergency_visit" | "outpatient_procedure"
+    source_patient_id: str              # hospital MRN — Hospital's own patient identifier
+    event_type: str                     # "hospital_encounter" | "emergency_visit" | "outpatient_procedure"
+    occurred_at: datetime               # when event occurred in Hospital system
 
     # 10 clinical fields
     medicare_id: str            # shared anchor — overlaps with Medicare and Labs
@@ -112,8 +114,9 @@ class LabEvent(BaseModel):
     # Envelope
     message_id: str
     source_system: str = "Labs"
-    source_patient_id: str      # lab patient ID — Labs's own identifier
+    source_patient_id: str              # lab patient ID — Labs's own identifier
     event_type: str = "lab_result"
+    occurred_at: datetime               # when event occurred in Labs system
 
     # 10 clinical fields
     medicare_id: str            # shared anchor — overlaps with Medicare and Hospital
@@ -145,6 +148,7 @@ class ReconciledEvent(BaseModel):
     event_log_ids: list[int] = Field(description="IDs of all event_logs reconciled in this window")
     event_processing_start: datetime = Field(description="When debounce window opened")
     event_processing_end: datetime = Field(description="When reconciliation was triggered/completed")
+    created_at: Optional[datetime] = Field(None, description="When this reconciliation was created")
 
     # Demographics (normalized, can override golden_record)
     first_name: Optional[str] = Field(None, description="Patient first name (normalized to mixed-case)")
@@ -179,6 +183,6 @@ class ReconciledEvent(BaseModel):
 
     # Unstructured
     clinical_notes: Optional[str] = Field(None, description="Provider narrative notes")
-    resolution_log: str = Field(description="How conflicts were resolved during reconciliation")
+    resolution_log: Optional[str] = Field(None, description="How conflicts were resolved during reconciliation")
     created_at: datetime = Field(description="When this reconciliation was created")
 

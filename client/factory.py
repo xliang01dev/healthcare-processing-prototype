@@ -11,13 +11,13 @@ discrepancies that exercise the reconciliation normalisation logic:
 """
 
 import random
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from models import (
-    HydrateEvent,
     HospitalEvent,
     LabEvent,
     MedicareEvent,
+    HydrateEvent,
     make_message_id,
 )
 
@@ -171,7 +171,7 @@ _PHYSICIAN_NPIS = [
 ]
 
 # ---------------------------------------------------------------------------
-# Builders — return (nats_subject, event_model)
+# Builders — return (source, event_model)
 # ---------------------------------------------------------------------------
 
 def _days_ago(n: int) -> date:
@@ -179,27 +179,32 @@ def _days_ago(n: int) -> date:
 
 
 def build_hydrate(patient: dict) -> tuple[str, HydrateEvent]:
-    return "patient.hydrate", HydrateEvent(
+    """Build a patient hydration (MPI initialization) event."""
+    enrollment_date = _days_ago(random.randint(365, 3650))
+    return "hydrate", HydrateEvent(
         operation="add",
         medicare_id=patient["medicare_id"],
         first_name=patient["first_name"],
         last_name=patient["last_name"],
         date_of_birth=patient["dob"],
         gender=patient["gender"],
+        occurred_at=datetime.combine(enrollment_date, datetime.min.time()),
     )
 
 
 def build_medicare(patient: dict) -> tuple[str, MedicareEvent]:
-    return "raw.source-medicare", MedicareEvent(
+    enrollment_date = _days_ago(random.randint(365, 3650))
+    return "medicare", MedicareEvent(
         message_id=make_message_id(patient["medicare_id"], "Medicare"),
         source_patient_id=patient["medicare_id"],
         event_type=random.choice(_MEDICARE_EVENT_TYPES),
+        occurred_at=datetime.combine(enrollment_date, datetime.min.time()),
         medicare_id=patient["medicare_id"],
         first_name=patient["first_name"],
         last_name=patient["last_name"],
         date_of_birth=patient["dob"],
         gender=patient["gender"],
-        enrollment_date=_days_ago(random.randint(365, 3650)),
+        enrollment_date=enrollment_date,
         plan_type=patient["plan_type"],
         primary_care_provider_npi=patient["pcp_npi"],
         state=patient["state"],
@@ -211,10 +216,11 @@ def build_hospital(patient: dict) -> tuple[str, HospitalEvent]:
     icd_code, _ = random.choice(_ICD10_CODES)
     admission = _days_ago(random.randint(7, 180))
     discharge = admission + timedelta(days=random.randint(1, 7))
-    return "raw.source-hospital", HospitalEvent(
+    return "hospital", HospitalEvent(
         message_id=make_message_id(patient["mrn"], "Hospital"),
         source_patient_id=patient["mrn"],
         event_type=random.choice(_HOSPITAL_EVENT_TYPES),
+        occurred_at=datetime.combine(admission, datetime.min.time()),
         medicare_id=patient["medicare_id"],
         ssn_last4=patient["ssn_last4"],
         first_name=patient["first_name"].upper(),   # hospital EHR returns UPPERCASE
@@ -230,16 +236,18 @@ def build_hospital(patient: dict) -> tuple[str, HospitalEvent]:
 
 def build_lab(patient: dict) -> tuple[str, LabEvent]:
     test, value, unit, ref_range = random.choice(_LAB_TESTS)
-    return "raw.source-labs", LabEvent(
+    test_date = _days_ago(random.randint(1, 30))
+    return "labs", LabEvent(
         message_id=make_message_id(patient["lab_id"], "Labs"),
         source_patient_id=patient["lab_id"],
+        occurred_at=datetime.combine(test_date, datetime.min.time()),
         medicare_id=patient["medicare_id"],
         patient_first_name=patient["first_name"],   # different field name from A/B
         patient_last_name=patient["last_name"],
         date_of_birth=patient["dob"],
         gender=patient["gender"],                    # "M"/"F" — agrees with A, conflicts with B
         test_ordered=test,
-        test_date=_days_ago(random.randint(1, 30)),
+        test_date=test_date,
         result_value=value,
         result_unit=unit,
         reference_range=ref_range,
@@ -255,7 +263,7 @@ _BUILDERS = {
 
 
 def build(source: str, patient: dict) -> tuple[str, object]:
-    """Build an event for the given source key ('i', 'a', 'b', 'c')."""
+    """Build an event for the given source key ('m', 'b', 'l')."""
     return _BUILDERS[source](patient)
 
 

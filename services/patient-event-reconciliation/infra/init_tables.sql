@@ -3,14 +3,14 @@
 -- debounce window needs replaying, there is no way to re-read from the bus.
 -- This table is the persistence layer that makes NATS core behave like a durable stream.
 CREATE TABLE IF NOT EXISTS patient_event_reconciliation.event_logs (
-    id                   BIGSERIAL PRIMARY KEY,
-    canonical_patient_id UUID   NOT NULL,
-    source_system_id     BIGINT NOT NULL,
-    message_id           TEXT   NOT NULL,
-    event_type           TEXT   NOT NULL,
-    payload              JSONB  NOT NULL,
-    source_system_event_at TIMESTAMPTZ NOT NULL,
-    created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    id                      BIGSERIAL PRIMARY KEY,
+    canonical_patient_id    UUID   NOT NULL,
+    source_system_id        BIGINT NOT NULL,
+    message_id              TEXT   NOT NULL,
+    event_type              TEXT   NOT NULL,
+    payload                 JSONB  NOT NULL,
+    source_system_occurred_at TIMESTAMPTZ NOT NULL,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Fast lookup for idempotency check (is message_id already processed?)

@@ -11,6 +11,16 @@ class IngestService:
 
     async def ingest_event(self, source: str, body: dict) -> dict:
         logger.info("ingest_event: source=%s body=%s", source, body)
-        # TODO: Assign message-id: sha256(source_id + version + source_system). See architecture Section 2.
-        # TODO: Call self.bus.publish(f"raw.{source}", body).
+        await self.bus.publish(
+            topic=f"raw.{source}",
+            payload=body
+        )
+        return {"received": True}
+
+    async def hydrate_patient(self, body: dict) -> dict:
+        logger.info("hydrate_patient: body=%s", body)
+        await self.bus.publish(
+            topic="patient.hydrate",
+            payload=body
+        )
         return {"received": True}

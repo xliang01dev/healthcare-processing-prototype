@@ -2,7 +2,7 @@ import logging
 from uuid import UUID
 
 from shared.data_provider import DataProvider
-from patient_data_models import GoldenRecord, SourceIdentity, SourceSystem
+from patient_data_models import GoldenRecord, SourceIdentity, SourceSystem, PatientInfo
 
 logger = logging.getLogger(__name__)
 
@@ -13,16 +13,16 @@ class PatientDataProvider(DataProvider):
     Schema: patient_data (patients, source_systems, source_identities, golden_records)
     """
 
-    async def fetch_patient(self, shared_identifier: str) -> str | None:
+    async def fetch_patient(self, shared_identifier: str) -> PatientInfo | None:
         logger.info("fetch_patient: shared_identifier=%s", shared_identifier)
 
-        row = await self.fetchrow(
-            "SELECT canonical_patient_id FROM patient_data.patients WHERE shared_identifier = $1",
+        row = await self.fetch_row(
+            "SELECT canonical_patient_id, shared_identifier FROM patient_data.patients WHERE shared_identifier = $1",
             shared_identifier
         )
-        return str(row[0]) if row else None
+        return PatientInfo(canonical_patient_id=row[0], shared_identifier=row[1]) if row else None
 
-    async def upsert_patient(self, shared_identifier: str) -> str:
+    async def upsert_patient(self, shared_identifier: str) -> PatientInfo:
         logger.info("upsert_patient: shared_identifier=%s", shared_identifier)
 
         await self.execute(
@@ -34,7 +34,7 @@ class PatientDataProvider(DataProvider):
     async def fetch_source_system(self, source_system_name: str) -> SourceSystem | None:
         logger.info("fetch_source_system: source_system_name=%s", source_system_name)
 
-        row = await self.fetchrow(
+        row = await self.fetch_row(
             "SELECT source_system_id, source_system_name FROM patient_data.source_systems WHERE source_system_name = $1",
             source_system_name,
         )
@@ -49,7 +49,7 @@ class PatientDataProvider(DataProvider):
             source_patient_id,
         )
 
-        row = await self.fetchrow(
+        row = await self.fetch_row(
             "SELECT id, canonical_patient_id, source_system_id, source_patient_id, created_at FROM patient_data.source_identities WHERE source_system_id = $1 AND source_patient_id = $2",
             source_system_id,
             source_patient_id,
@@ -57,7 +57,7 @@ class PatientDataProvider(DataProvider):
         return (
             SourceIdentity(
                 id=row[0],
-                canonical_patient_id=UUID(row[1]),
+                canonical_patient_id=row[1],
                 source_system_id=row[2],
                 source_patient_id=row[3],
                 created_at=row[4],
@@ -83,7 +83,7 @@ class PatientDataProvider(DataProvider):
         ON CONFLICT (source_system_id, source_patient_id) DO NOTHING
         """
 
-        await self.execute(sql, UUID(canonical_patient_id), source_system_id, source_patient_id)
+        await self.execute(sql, canonical_patient_id, source_system_id, source_patient_id)
 
     async def upsert_golden_record(self, canonical_patient_id: str, record: GoldenRecord) -> None:
         logger.info("upsert_golden_record: canonical_patient_id=%s", canonical_patient_id)
@@ -115,7 +115,7 @@ class PatientDataProvider(DataProvider):
     async def fetch_golden_record(self, canonical_patient_id: str) -> GoldenRecord | None:
         logger.info("fetch_golden_record: canonical_patient_id=%s", canonical_patient_id)
 
-        row = await self.fetchrow(
+        row = await self.fetch_row(
             """
             SELECT 
                 canonical_patient_id, 
@@ -133,7 +133,7 @@ class PatientDataProvider(DataProvider):
         )
         return (
             GoldenRecord(
-                canonical_patient_id=UUID(row[0]),
+                canonical_patient_id=row[0],
                 source_system_ids=row[1],
                 given_name=row[2],
                 family_name=row[3],

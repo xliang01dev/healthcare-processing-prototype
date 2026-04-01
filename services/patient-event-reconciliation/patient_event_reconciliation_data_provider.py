@@ -5,6 +5,7 @@ from datetime import datetime
 from shared.data_provider import DataProvider
 from patient_event_models import EventLog, PendingPublish
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -14,40 +15,46 @@ class PatientEventReconciliationDataProvider(DataProvider):
     Schema: patient_event_reconciliation (processed_messages, event_logs, pending_publish_debouncer, resolved_events, reconciliation_conflicts)
     """
 
+    @staticmethod
+    def _parse_datetime(value):
+        """Parse ISO string to datetime if needed."""
+        if isinstance(value, str):
+            return datetime.fromisoformat(value)
+        return value
+
     async def has_event_log(self, message_id: str) -> bool:
         logger.info("has_event_log: message_id=%s", message_id)
-        self.execute("SELECT 1 FROM patient_event_reconciliation.event_logs WHERE message_id = %s", (message_id,))
-        result = self.fetchone()
+        result = await self.fetch_row("SELECT 1 FROM patient_event_reconciliation.event_logs WHERE message_id = $1", message_id)
         return result is not None
 
     async def insert_event_log(self, event: dict) -> int:
         logger.info("insert_event_log: canonical_patient_id=%s event_type=%s", event.get("canonical_patient_id"), event.get("event_type"))
+
         sql = """
             INSERT INTO patient_event_reconciliation.event_logs
-            (canonical_patient_id, source_system_id, message_id, event_type, payload, source_system_event_at)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            (canonical_patient_id, source_system_id, message_id, event_type, payload, source_system_occurred_at)
+            VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING id
         """
-        event_log_id = self.execute(sql, (
+        row = await self.execute_returning(sql,
             event.get("canonical_patient_id"),
             event.get("source_system_id"),
             event.get("message_id"),
             event.get("event_type"),
-            json.dumps(event.get("payload")),
-            event.get("source_system_event_at"),
-        ))
-        return event_log_id
+            json.dumps(event),
+            self._parse_datetime(event.get("occurred_at")),
+        )
+        return row[0] if row else None
 
     async def fetch_event_log_between(self, canonical_patient_id: str, from_event_log_id: int, to_event_log_id: int) -> list[EventLog]:
         logger.info("fetch_event_log_between: canonical_patient_id=%s from_event_log_id=%s to_event_log_id=%s", canonical_patient_id, from_event_log_id, to_event_log_id)
         sql = """
-            SELECT id, canonical_patient_id, source_system_id, message_id, event_type, payload, source_system_event_at, created_at
+            SELECT id, canonical_patient_id, source_system_id, message_id, event_type, payload, source_system_occurred_at, created_at
             FROM patient_event_reconciliation.event_logs
-            WHERE canonical_patient_id = %s AND id >= %s AND id <= %s
+            WHERE canonical_patient_id = $1 AND id >= $2 AND id <= $3
             ORDER BY id ASC
         """
-        self.execute(sql, (canonical_patient_id, from_event_log_id, to_event_log_id))
-        rows = self.fetchall()
+        rows = await self.fetch_rows(sql, canonical_patient_id, from_event_log_id, to_event_log_id)
         return [
             EventLog(
                 id=row[0],
@@ -56,7 +63,7 @@ class PatientEventReconciliationDataProvider(DataProvider):
                 message_id=row[3],
                 event_type=row[4],
                 payload=json.loads(row[5]),
-                source_system_event_at=row[6],
+                source_system_occurred_at=row[6],
                 created_at=row[7],
             )
             for row in rows
@@ -67,10 +74,9 @@ class PatientEventReconciliationDataProvider(DataProvider):
         sql = """
             SELECT id, canonical_patient_id, first_event_log_id, last_event_log_id, scheduled_after, ceiling_at, published_at, updated_at
             FROM patient_event_reconciliation.pending_publish_debouncer
-            WHERE canonical_patient_id = %s AND published_at IS NULL
+            WHERE canonical_patient_id = $1 AND published_at IS NULL
         """
-        self.execute(sql, (canonical_patient_id,))
-        row = self.fetchone()
+        row = await self.fetch_row(sql, canonical_patient_id)
         if row:
             return PendingPublish(
                 id=row[0],
@@ -93,15 +99,15 @@ class PatientEventReconciliationDataProvider(DataProvider):
         sql = """
             INSERT INTO patient_event_reconciliation.pending_publish_debouncer
             (canonical_patient_id, first_event_log_id, last_event_log_id, scheduled_after, ceiling_at)
-            VALUES (%s, %s, %s, %s, %s)
+            VALUES ($1, $2, $3, $4, $5)
         """
-        await self.execute(sql, (
+        await self.execute(sql,
             canonical_patient_id,
             event_log_id,
             event_log_id,
             scheduled_after,
             ceiling_at
-        ))
+        )
 
     async def update_pending_publish(self, canonical_patient_id: str, event_log_id: int, scheduled_after: datetime) -> None:
         logger.info(
@@ -110,16 +116,16 @@ class PatientEventReconciliationDataProvider(DataProvider):
         )
         sql = """
             UPDATE patient_event_reconciliation.pending_publish_debouncer
-            SET last_event_log_id = %s,
-                scheduled_after = %s,
+            SET last_event_log_id = $1,
+                scheduled_after = $2,
                 updated_at = NOW()
-            WHERE canonical_patient_id = %s AND published_at IS NULL
+            WHERE canonical_patient_id = $3 AND published_at IS NULL
         """
-        await self.execute(sql, (
+        await self.execute(sql,
             event_log_id,
             scheduled_after,
             canonical_patient_id
-        ))
+        )
 
     async def insert_resolved_event(self, event: dict) -> None:
         logger.info("insert_resolved_event: canonical_patient_id=%s", event.get("canonical_patient_id"))

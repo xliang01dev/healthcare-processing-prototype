@@ -14,7 +14,7 @@ from models import (
 logger = logging.getLogger(__name__)
 
 
-class PatientServiceCoordinator:
+class PatientCoordinatorService:
     def __init__(
         self,
         http_client: httpx.AsyncClient,
@@ -29,10 +29,54 @@ class PatientServiceCoordinator:
         self.timeline_url = timeline_url
         self.patient_summary_url = patient_summary_url
 
-    async def get_patient_info(self, canonical_patient_id: str) -> PatientInfoResponse:
+    async def get_patient_info(self, canonical_patient_id: str, medicare_id: str) -> PatientInfoResponse:
         logger.info("get_patient_info: canonical_patient_id=%s", canonical_patient_id)
-        # TODO: GET {patient_data_url}/internal/patient/{canonical_patient_id}/golden-record
-        return PatientInfoResponse()
+        try:
+            url = f"{self.patient_data_url}/internal/patient/{canonical_patient_id}/golden-record"
+            response = await self.http_client.get(url)
+            response.raise_for_status()
+
+            response_json = response.json()
+            response_json["medicare_id"] = medicare_id
+
+            patient_info_response = PatientInfoResponse.model_validate(response_json)
+            patient_info_response.medicare_id = medicare_id
+            
+            return patient_info_response
+        except httpx.HTTPError as e:
+            logger.error("Failed to fetch patient info: %s", e)
+            return PatientInfoResponse()
+
+    async def resolve_medicare_id_to_canonical(self, medicare_id: str) -> str | None:
+        """Resolve medicare_id to canonical_patient_id via patient_data service."""
+        logger.info("resolve_medicare_id_to_canonical: medicare_id=%s", medicare_id)
+        try:
+            # Query patient_data service to resolve medicare_id to canonical_patient_id
+            # Assuming there's an endpoint like /internal/patient/resolve?medicare_id={id}
+            # For now, we'll use a direct query to get the canonical_patient_id
+            url = f"{self.patient_data_url}/internal/patient/resolve"
+            params = {"medicare_id": medicare_id}
+            response = await self.http_client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+            return data.get("canonical_patient_id")
+        except httpx.HTTPError as e:
+            logger.error("Failed to resolve medicare_id: %s", e)
+            return None
+
+    async def resolve_canonical_to_medicare_id(self, canonical_patient_id: str) -> str | None:
+        """Resolve medicare_id to canonical_patient_id via patient_data service."""
+        logger.info("resolve_canonical_to_medicare_id: medicare_id=%s", canonical_patient_id)
+        try:
+            url = f"{self.patient_data_url}/internal/patient/resolve"
+            params = {"canonical_patient_id": canonical_patient_id}
+            response = await self.http_client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+            return data.get("medicare_id")
+        except httpx.HTTPError as e:
+            logger.error("Failed to resolve medicare_id: %s", e)
+            return None
 
     async def get_patient_timelines(
         self, canonical_patient_id: str, page: int, page_size: int

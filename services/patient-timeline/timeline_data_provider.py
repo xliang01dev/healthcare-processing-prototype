@@ -92,18 +92,6 @@ class TimelineDataProvider(DataProvider):
         logger.info("refresh_patient_timeline")
         await self.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY patient_timeline.patient_timeline")
 
-    async def fetch_latest_patient_timeline(self, canonical_patient_id: str) -> dict | None:
-        """Fetch the latest timeline event for a patient (O(1) lookup from materialized view)."""
-        logger.info("fetch_latest_patient_timeline: canonical_patient_id=%s", canonical_patient_id)
-
-        sql = """
-        SELECT * FROM patient_timeline.patient_timeline
-        WHERE canonical_patient_id = $1
-        """
-
-        row = await self.fetchrow(sql, canonical_patient_id)
-        return dict(row) if row else None
-
     async def fetch_patient_timeline(
         self, canonical_patient_id: str, page: int, page_size: int
     ) -> list:
@@ -116,4 +104,4 @@ class TimelineDataProvider(DataProvider):
         LIMIT $2 OFFSET $3
         """
 
-        return await self.fetch(sql, canonical_patient_id, page_size, (page - 1) * page_size)
+        return await self.fetch_rows(sql, canonical_patient_id, page_size, (page - 1) * page_size)

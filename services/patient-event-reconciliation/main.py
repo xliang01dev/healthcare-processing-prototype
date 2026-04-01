@@ -7,6 +7,11 @@ import yaml
 
 from fastapi import FastAPI
 
+# Debugpy setup for VSCode remote attach
+if os.getenv("INCLUDE_DEBUG", "false").lower() == "debugpy":
+    import debugpy
+    debugpy.listen(("0.0.0.0", 5678))
+
 from shared.message_bus import MessageBus
 from shared.singleton_store import get_singleton, register_singleton, remove_singleton
 from patient_event_reconciliation_service import PatientEventReconciliationService
@@ -32,7 +37,7 @@ bus = MessageBus(os.getenv("NATS_URL", ""))
 
 reconciliation_rules = PatientEventReconciliationRules()
 register_singleton(PatientEventReconciliationRules, reconciliation_rules)
-register_singleton(PatientEventReconciliationService, PatientEventReconciliationService(data_provider, bus, reconciliation_rules))
+register_singleton(PatientEventReconciliationService, PatientEventReconciliationService(data_provider, reconciliation_rules, bus))
 
 
 async def _handle_reconcile_event(msg):

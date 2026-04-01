@@ -85,5 +85,5 @@ class EventLog(BaseModel):
     message_id: str = Field(description="Unique message ID from the source system for idempotency")
     event_type: str = Field(description="Type of event (e.g., 'enrollment', 'admission', 'lab_result')")
     payload: dict = Field(description="Event payload with event-specific data")
-    source_system_event_at: datetime = Field(description="Timestamp when the event occurred in the source system")
+    source_system_occurred_at: datetime = Field(description="Timestamp when the event occurred in the source system")
     created_at: datetime = Field(description="Timestamp when this event was received and logged")

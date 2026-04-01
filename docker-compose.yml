@@ -104,6 +104,7 @@ services:
       args:
         INCLUDE_DEBUG: debugpy
     environment:
+      INCLUDE_DEBUG: debugpy
       NATS_URL: nats://nats:4222
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432

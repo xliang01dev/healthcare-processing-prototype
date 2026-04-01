@@ -5,9 +5,10 @@ from pydantic import BaseModel
 
 from shared.event_models import HospitalEvent, LabEvent, MedicareEvent
 
-# ---------------------------------------------------------------------------
-# patient.hydrate
-# ---------------------------------------------------------------------------
+class PatientInfo(BaseModel):
+    canonical_patient_id: UUID
+    shared_identifier: str
+
 
 class GoldenRecord(BaseModel):
     canonical_patient_id: UUID
