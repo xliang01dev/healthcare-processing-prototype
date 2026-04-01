@@ -84,6 +84,8 @@ services:
       POSTGRES_READER_PASSWORD: hs_reader
       POSTGRES_WRITER_USER: hs_writer
       POSTGRES_WRITER_PASSWORD: hs_writer
+      POSTGRES_POOL_MIN_SIZE: 2
+      POSTGRES_POOL_MAX_SIZE: 5
     ports:
       - "8002:8002"
       - "5680:5678"  # debugpy
@@ -110,6 +112,8 @@ services:
       POSTGRES_READER_PASSWORD: hs_reader
       POSTGRES_WRITER_USER: hs_writer
       POSTGRES_WRITER_PASSWORD: hs_writer
+      POSTGRES_POOL_MIN_SIZE: 2
+      POSTGRES_POOL_MAX_SIZE: 5
     ports:
       - "8003:8003"
       - "5681:5678"  # debugpy
@@ -136,6 +140,8 @@ services:
       POSTGRES_READER_PASSWORD: hs_reader
       POSTGRES_WRITER_USER: hs_writer
       POSTGRES_WRITER_PASSWORD: hs_writer
+      POSTGRES_POOL_MIN_SIZE: 2
+      POSTGRES_POOL_MAX_SIZE: 5
     ports:
       - "8004:8004"
       - "5682:5678"  # debugpy
@@ -162,6 +168,8 @@ services:
       POSTGRES_READER_PASSWORD: hs_reader
       POSTGRES_WRITER_USER: hs_writer
       POSTGRES_WRITER_PASSWORD: hs_writer
+      POSTGRES_POOL_MIN_SIZE: 2
+      POSTGRES_POOL_MAX_SIZE: 5
       PATIENT_DATA_URL: http://patient-data:8002
       TIMELINE_URL: http://patient-timeline:8004
     ports:
@@ -234,6 +242,8 @@ services:
       POSTGRES_READER_PASSWORD: hs_reader
       POSTGRES_WRITER_USER: hs_writer
       POSTGRES_WRITER_PASSWORD: hs_writer
+      POSTGRES_POOL_MIN_SIZE: 2
+      POSTGRES_POOL_MAX_SIZE: 5
       LOG_CONFIG: shared/custom-logging.yaml
     ports:
       - "8007:8007"

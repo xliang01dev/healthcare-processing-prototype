@@ -12,26 +12,34 @@ class DataProvider:
     would point to a read replica (except MPI, which has no replica).
     """
 
-    def __init__(self, reader_dsn: str, writer_dsn: str) -> None:
+    def __init__(
+        self,
+        reader_dsn: str,
+        writer_dsn: str,
+        pool_min_size: int = 2,
+        pool_max_size: int = 5,
+    ) -> None:
         if not reader_dsn:
             raise ValueError("DataProvider requires a reader DSN — set POSTGRES_READER_* env vars")
         if not writer_dsn:
             raise ValueError("DataProvider requires a writer DSN — set POSTGRES_WRITER_* env vars")
         self._reader_dsn = reader_dsn
         self._writer_dsn = writer_dsn
+        self._pool_min_size = pool_min_size
+        self._pool_max_size = pool_max_size
         self._reader: asyncpg.Pool | None = None
         self._writer: asyncpg.Pool | None = None
 
     async def connect(self) -> None:
         self._reader = await asyncpg.create_pool(
             self._reader_dsn,
-            min_size=2,
-            max_size=5,
+            min_size=self._pool_min_size,
+            max_size=self._pool_max_size,
         )
         self._writer = await asyncpg.create_pool(
             self._writer_dsn,
-            min_size=2,
-            max_size=5,
+            min_size=self._pool_min_size,
+            max_size=self._pool_max_size,
         )
 
     async def disconnect(self) -> None:

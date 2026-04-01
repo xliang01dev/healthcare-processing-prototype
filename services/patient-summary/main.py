@@ -25,6 +25,8 @@ _host, _port, _db = os.getenv("POSTGRES_HOST"), os.getenv("POSTGRES_PORT", "5432
 data_provider = PatientSummaryDataProvider(
     reader_dsn=f"postgresql://{os.getenv('POSTGRES_READER_USER')}:{os.getenv('POSTGRES_READER_PASSWORD')}@{_host}:{_port}/{_db}",
     writer_dsn=f"postgresql://{os.getenv('POSTGRES_WRITER_USER')}:{os.getenv('POSTGRES_WRITER_PASSWORD')}@{_host}:{_port}/{_db}",
+    pool_min_size=int(os.getenv("POSTGRES_POOL_MIN_SIZE", "2")),
+    pool_max_size=int(os.getenv("POSTGRES_POOL_MAX_SIZE", "5")),
 )
 http_client = httpx.AsyncClient()
 bus = MessageBus(os.getenv("NATS_URL", ""))
