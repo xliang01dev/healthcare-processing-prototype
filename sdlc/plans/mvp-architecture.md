@@ -493,6 +493,31 @@ CREATE TABLE patient_summary.recommendations (
 
 ---
 
+## 7. NPI Registry — Provider Enrichment Service
+
+### Rationale
+
+Reconciled events contain National Provider Identifier (NPI) codes — unique 10-digit identifiers assigned to all US healthcare providers by CMS. However, NPIs are identifiers, not human-readable data. An LLM or downstream consumer needs provider **names** and **credentials** ("Dr. John Smith, MD, Cardiology"), not just the NPI code.
+
+Rather than embedding provider enrichment logic in Patient Event Reconciliation or Patient Summary, a dedicated NPI Registry service provides a single source of truth for provider details. Services can query it on-demand via HTTP.
+
+### Design
+
+- **Database:** Single table `npi_registry.providers` with columns: `npi` (PK), `first_name`, `last_name`, `title` (MD/DO/PA/NP), `specialty`.
+- **No message bus:** This is a synchronous, read-heavy reference service. No event coupling needed.
+- **Seeding:** Preseeded with test providers via `init_tables.sql`. In production, would be synced from CMS NPI Registry or internal provider directory.
+- **API:** Exposes `GET /v1/npi/{npi_id}` returning JSON: `{"npi": "...", "first_name": "...", "last_name": "...", "title": "...", "specialty": "..."}`.
+- **Lookup latency:** Minimal — single Postgres query per NPI. Suitable for inline enrichment during reconciliation or summary generation.
+
+### Future Extensions
+
+- Batch lookup endpoint: `POST /v1/npi/lookup` with array of NPIs
+- Caching layer (Redis) if lookup frequency justifies it
+- Integration with CMS NPPES API for real-time NPI validation and enrichment
+- Specialty rollup queries for provider network analysis
+
+---
+
 ## 8. Microservices Topology
 
 ### Services
@@ -505,6 +530,7 @@ CREATE TABLE patient_summary.recommendations (
 | Patient Timeline Service | Consumes `reconciled.events`. Calls `REFRESH MATERIALIZED VIEW CONCURRENTLY patient_timeline`. Publishes `timeline.updated` after refresh completes. Exposes `/internal/patient/timeline`. | 8004 |
 | Patient Summary Service | Subscribes to `timeline.updated`. Fetches timeline via Patient Timeline API and golden record via Patient Data API. Builds versioned prompt. Calls LLM backend. Applies deduplication. Writes to `recommendations`. Publishes `risk.computed`. Cron batch runs nightly. | 8005 |
 | Notification Service | Consumes `risk.computed`. Routes alerts for High/Critical risk patients (console log in POC). | 8006 |
+| NPI Registry | Reference service for provider details. Exposes `GET /v1/npi/{npi_id}` to map NPI codes to provider names, titles, specialties. No message bus coupling. Seeded with test providers; can be enriched from CMS NPI Registry in production. | 8007 |
 | Patient API Service | Exposes HTTP endpoints for external consumers. Delegates to downstream services via `PatientServiceCoordinator`. Does not own any DB tables. | 8000 |
 
 ### Event Bus Topics
@@ -600,24 +626,25 @@ flowchart TD
 1. Implement the `MessageBus` module (`/shared/message_bus.py`). Stable `publish` / `subscribe` interface backed by `nats-py`. `MessageBus` is instantiated at module level; `ValueError` on empty URL is deferred to `connect()`.
 2. Implement the `singleton_store` module (`/shared/singleton_store.py`). `register_singleton` / `get_singleton` / `remove_singleton`.
 3. Define internal JSON schemas for each event type (source event, reconciled event, timeline record, risk assessment). Store in `/schemas`.
-4. Implement the Ingestion Gateway (FastAPI). Parses Source A, B, C. Assigns deterministic `message-id`. Publishes to `raw.*` via `MessageBus`.
-5. Implement the Patient Data Service. Atomic lookup-or-create on shared anchor. Upserts `source_identities` and `golden_records`. Publishes to `reconcile.{canonical_patient_id}`. Exposes golden-record internal API.
+4. Implement the NPI Registry service (FastAPI). Exposes `GET /v1/npi/{npi_id}` to return provider details (name, title, specialty) by NPI code. Seeded with test providers. No message bus coupling.
+5. Implement the Ingestion Gateway (FastAPI). Parses Source A, B, C. Assigns deterministic `message-id`. Publishes to `raw.*` via `MessageBus`.
+6. Implement the Patient Data Service. Atomic lookup-or-create on shared anchor. Upserts `source_identities` and `golden_records`. Publishes to `reconcile.{canonical_patient_id}`. Exposes golden-record internal API.
 
 ### Phase 2: Reconciliation and Timeline
 
-6. Implement Patient Event Reconciliation. Consume `reconcile.*`. Idempotency check. Append `event_logs`. Upsert `pending_publish_debouncer` debounce window. On expiry: merge, write `resolved_events`, publish `reconciled.events`.
-7. Implement Patient Timeline Service. Consume `reconciled.events`. Refresh materialized view. Publish `timeline.updated`. Expose timeline internal API.
+7. Implement Patient Event Reconciliation. Consume `reconcile.*`. Idempotency check. Append `event_logs`. Upsert `pending_publish_debouncer` debounce window. On expiry: merge, write `resolved_events`, publish `reconciled.events`.
+8. Implement Patient Timeline Service. Consume `reconciled.events`. Refresh materialized view. Publish `timeline.updated`. Expose timeline internal API.
 
 ### Phase 3: LLM Risk and Summary
 
-8. Implement Patient Summary Service. Subscribe to `timeline.updated`. Fetch timeline + golden record via HTTP. Build versioned prompt. Call `LLMBackend` asynchronously (demo: static dictionary). Apply hash deduplication. Write to `recommendations`. Publish `risk.computed`. Implement cron batch for nightly run.
+9. Implement Patient Summary Service. Subscribe to `timeline.updated`. Fetch timeline + golden record via HTTP. Build versioned prompt. Call `LLMBackend` asynchronously (demo: static dictionary). Apply hash deduplication. Write to `recommendations`. Publish `risk.computed`. Implement cron batch for nightly run.
 
 ### Phase 4: Notification, API, and Observability
 
-9. Implement Notification Service. Consume `risk.computed`. Log alerts for High/Critical patients.
-10. Implement Patient API Service. FastAPI service with `PatientServiceCoordinator` delegating to downstream internal APIs.
-11. Add structured logging with `correlation-id` (derived from `message-id`) across all services.
-12. Write synthetic data generators for Source A, B, and C. Include delayed records, corrections, and duplicates.
+10. Implement Notification Service. Consume `risk.computed`. Log alerts for High/Critical patients.
+11. Implement Patient API Service. FastAPI service with `PatientServiceCoordinator` delegating to downstream internal APIs.
+12. Add structured logging with `correlation-id` (derived from `message-id`) across all services.
+13. Write synthetic data generators for Source A, B, and C. Include delayed records, corrections, and duplicates.
 
 ---
 

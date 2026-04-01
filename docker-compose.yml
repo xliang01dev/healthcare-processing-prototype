@@ -12,6 +12,10 @@ services:
       POSTGRES_DB: healthcare
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=150"
     volumes:
       - healthcare_postgres_data:/var/lib/postgresql/data
       - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/00_base.sql
@@ -19,6 +23,7 @@ services:
       - ./services/patient-event-reconciliation/infra/init_tables.sql:/docker-entrypoint-initdb.d/02_reconciliation.sql
       - ./services/patient-timeline/infra/init_tables.sql:/docker-entrypoint-initdb.d/03_timeline.sql
       - ./services/patient-summary/infra/init_tables.sql:/docker-entrypoint-initdb.d/04_patient_summary.sql
+      - ./services/npi-registry/infra/init_tables.sql:/docker-entrypoint-initdb.d/05_npi_registry.sql
     ports:
       - "5432:5432"
     healthcheck:
@@ -212,6 +217,37 @@ services:
         condition: service_healthy
     networks:
       - healthcare-service-network
+
+  npi-registry:
+    build:
+      context: .
+      dockerfile: services/npi-registry/infra/Dockerfile
+      args:
+        INCLUDE_DEBUG: debugpy
+        APP_PORT: 8007
+    container_name: npi-registry
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: healthcare
+      POSTGRES_READER_USER: hs_reader
+      POSTGRES_READER_PASSWORD: hs_reader
+      POSTGRES_WRITER_USER: hs_writer
+      POSTGRES_WRITER_PASSWORD: hs_writer
+      LOG_CONFIG: shared/custom-logging.yaml
+    ports:
+      - "8007:8007"
+      - "5685:5678"  # debugpy
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - healthcare-service-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8007/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 volumes:
   healthcare_postgres_data:

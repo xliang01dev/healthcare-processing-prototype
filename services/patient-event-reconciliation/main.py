@@ -11,6 +11,7 @@ from shared.message_bus import MessageBus
 from shared.singleton_store import get_singleton, register_singleton, remove_singleton
 from patient_event_reconciliation_service import PatientEventReconciliationService
 from patient_event_reconciliation_data_provider import PatientEventReconciliationDataProvider
+from patient_event_reconciliation_rules import PatientEventReconciliationRules
 import internal_router as internal
 
 faulthandler.enable()
@@ -26,7 +27,10 @@ data_provider = PatientEventReconciliationDataProvider(
     writer_dsn=f"postgresql://{os.getenv('POSTGRES_WRITER_USER')}:{os.getenv('POSTGRES_WRITER_PASSWORD')}@{_host}:{_port}/{_db}",
 )
 bus = MessageBus(os.getenv("NATS_URL", ""))
-register_singleton(PatientEventReconciliationService, PatientEventReconciliationService(data_provider, bus))
+
+reconciliation_rules = PatientEventReconciliationRules()
+register_singleton(PatientEventReconciliationRules, reconciliation_rules)
+register_singleton(PatientEventReconciliationService, PatientEventReconciliationService(data_provider, bus, reconciliation_rules))
 
 
 async def _handle_reconcile_event(msg):

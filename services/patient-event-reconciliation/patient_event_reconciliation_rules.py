@@ -3,7 +3,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 from patient_event_models import EventLog, ReconciledEvent
-from ...shared.event_models import (
+from shared.event_models import (
     MedicareEvent,
     HospitalEvent,
     LabEvent

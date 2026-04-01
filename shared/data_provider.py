@@ -23,8 +23,16 @@ class DataProvider:
         self._writer: asyncpg.Pool | None = None
 
     async def connect(self) -> None:
-        self._reader = await asyncpg.create_pool(self._reader_dsn)
-        self._writer = await asyncpg.create_pool(self._writer_dsn)
+        self._reader = await asyncpg.create_pool(
+            self._reader_dsn,
+            min_size=2,
+            max_size=5,
+        )
+        self._writer = await asyncpg.create_pool(
+            self._writer_dsn,
+            min_size=2,
+            max_size=5,
+        )
 
     async def disconnect(self) -> None:
         if self._reader is not None:
