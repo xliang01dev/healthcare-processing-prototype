@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS patient_timeline.timeline_events (
 
     -- Unstructured
     clinical_notes          TEXT,
-    resolution_log          TEXT NOT NULL,
+    resolution_log          TEXT,
 
     -- Metadata
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -65,3 +65,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS patient_timeline_canonical_patient_id_idx
 
 -- Transfer ownership so hs_writer can REFRESH without needing pg_maintain
 ALTER MATERIALIZED VIEW patient_timeline.patient_timeline OWNER TO hs_writer;
+
+-- Initialize the materialized view (non-concurrent)
+-- Required: REFRESH MATERIALIZED VIEW CONCURRENTLY can only be used on an already-populated view
+REFRESH MATERIALIZED VIEW patient_timeline.patient_timeline;

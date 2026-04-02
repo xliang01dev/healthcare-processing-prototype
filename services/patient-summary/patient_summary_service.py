@@ -1,5 +1,5 @@
 import logging
-
+import json
 import httpx
 
 from patient_summary_data_provider import PatientSummaryDataProvider
@@ -67,7 +67,8 @@ class PatientSummaryService:
         return {"queued": True, "canonical_patient_id": canonical_patient_id}
 
     async def handle_timeline_updated(self, msg) -> None:
-        logger.info("handle_timeline_updated: data=%s", msg.data)
+        timeline_json = json.loads(msg.data.decode())
+        logger.info("handle_timeline_updated: data=%s", timeline_json)
         # TODO: Parse canonical_patient_id from msg payload.
         # TODO: Call self._assess_patient(canonical_patient_id).
 

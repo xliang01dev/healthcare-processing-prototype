@@ -63,11 +63,15 @@ class PatientEventReconciliationService:
                     canonical_patient_id=canonical_patient_id,
                     event_logs=event_logs
                 )
+                await self.data_provider.update_pending_published_at(
+                    canonical_patient_id=canonical_patient_id,
+                    published_at=datetime.now()
+                )
                 # Can update golden record too
                 if reconciled_event:
                     await self.bus.publish(
                         topic="reconciled.events",
-                        payload=reconciled_event.model_dump_json()
+                        payload=reconciled_event.model_dump(mode='json')
                     )
 
         # Create a new debounce window if there isn't one or if we're outside the existing debounce window

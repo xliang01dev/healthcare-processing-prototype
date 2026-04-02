@@ -103,7 +103,17 @@ class PatientEventReconciliationRules:
 
                 # Medicare: insurance and enrollment
                 reconciled.primary_plan = event.plan_type or reconciled.primary_plan
-                reconciled.member_id = event.source_patient_id or reconciled.member_id  # medicare_id IS the identifier
+                reconciled.member_id = event.member_id or event.source_patient_id or reconciled.member_id
+
+                # Medicare: coverage status
+                if event.eligibility_status:
+                    reconciled.eligibility_status = event.eligibility_status
+                if event.network_status:
+                    reconciled.network_status = event.network_status
+                if event.authorization_required is not None:
+                    reconciled.authorization_required = event.authorization_required
+                if event.authorization_status:
+                    reconciled.authorization_status = event.authorization_status
 
                 # Medicare provider NPI
                 if event.primary_care_provider_npi:
@@ -125,9 +135,28 @@ class PatientEventReconciliationRules:
                 if event.discharge_date:
                     reconciled.discharge_date = event.discharge_date
 
+                # Hospital: encounter details
+                if event.facility_name:
+                    reconciled.facility_name = event.facility_name
+                if event.encounter_status:
+                    reconciled.encounter_status = event.encounter_status
+
                 # Primary diagnosis from Hospital
                 if event.primary_diagnosis_icd10:
+                    reconciled.diagnosis_codes.append(event.primary_diagnosis_icd10)
                     reconciled.active_diagnoses.append(event.primary_diagnosis_icd10)
+
+                # Hospital: clinical data arrays
+                if event.procedures:
+                    reconciled.procedures.extend(event.procedures)
+                if event.medications:
+                    reconciled.medications.extend(event.medications)
+                if event.allergies:
+                    reconciled.allergies.extend(event.allergies)
+
+                # Hospital: clinical notes
+                if event.clinical_notes:
+                    reconciled.clinical_notes = event.clinical_notes
 
                 # Attending physician from Hospital
                 if event.attending_physician_npi:

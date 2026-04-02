@@ -10,7 +10,7 @@ from fastapi import FastAPI
 
 from shared.singleton_store import register_singleton, remove_singleton
 from patient_coordinator_service import PatientCoordinatorService
-from patient_coordinator_router import router
+from internal_router import router
 
 faulthandler.enable()
 

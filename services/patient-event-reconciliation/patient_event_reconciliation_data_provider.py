@@ -127,6 +127,18 @@ class PatientEventReconciliationDataProvider(DataProvider):
             canonical_patient_id
         )
 
+    async def update_pending_published_at(self, canonical_patient_id: str, published_at: datetime = datetime.now) -> None:
+        logger.info(
+            "update_pending_published_date: canonical_patient_id=%s,  published_at=%s",
+            canonical_patient_id, published_at
+        )
+        sql = """
+            UPDATE patient_event_reconciliation.pending_publish_debouncer
+            SET published_at = $1
+            WHERE canonical_patient_id = $2 AND published_at IS NULL
+        """
+        await self.execute(sql, published_at, canonical_patient_id)
+
     async def insert_resolved_event(self, event: dict) -> None:
         logger.info("insert_resolved_event: canonical_patient_id=%s", event.get("canonical_patient_id"))
         # TODO: INSERT INTO patient_event_reconciliation.resolved_events

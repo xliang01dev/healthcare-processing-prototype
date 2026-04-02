@@ -45,7 +45,7 @@ class MedicareEvent(BaseModel):
     event_type: str                  # "medicare_enrollment" | "medicare_claims" | "hcc_risk_score_update"
     occurred_at: datetime            # when event occurred in Medicare system
 
-    # 10 clinical fields
+    # 10 clinical fields (required)
     medicare_id: str            # shared anchor — same value used by Hospital and Labs
     first_name: str
     last_name: str
@@ -56,6 +56,13 @@ class MedicareEvent(BaseModel):
     primary_care_provider_npi: str
     state: str
     zip_code: str
+
+    # Optional additional coverage fields for comprehensive timeline
+    member_id: Optional[str] = None
+    eligibility_status: Optional[str] = None    # "active", "terminated", "suspended"
+    network_status: Optional[str] = None        # "in-network", "out-of-network"
+    authorization_required: Optional[bool] = None
+    authorization_status: Optional[str] = None  # authorization approval status
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +88,7 @@ class HospitalEvent(BaseModel):
     event_type: str                     # "hospital_encounter" | "emergency_visit" | "outpatient_procedure"
     occurred_at: datetime               # when event occurred in Hospital system
 
-    # 10 clinical fields
+    # 10 clinical fields (required)
     medicare_id: str            # shared anchor — overlaps with Medicare and Labs
     ssn_last4: str
     first_name: str             # UPPERCASE — hospital EHR convention; conflicts with Medicare/Labs
@@ -92,6 +99,14 @@ class HospitalEvent(BaseModel):
     discharge_date: date
     primary_diagnosis_icd10: str
     attending_physician_npi: str
+
+    # Optional additional clinical fields for comprehensive timeline
+    facility_name: Optional[str] = None
+    encounter_status: Optional[str] = None      # "active", "discharged", "pending"
+    procedures: Optional[list[str]] = None      # CPT codes and descriptions
+    medications: Optional[list[str]] = None     # Current medications
+    allergies: Optional[list[str]] = None       # Drug/food allergies
+    clinical_notes: Optional[str] = None        # Provider narrative
 
 
 # ---------------------------------------------------------------------------
