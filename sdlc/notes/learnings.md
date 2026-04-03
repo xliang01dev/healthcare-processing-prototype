@@ -104,6 +104,22 @@
 
 ---
 
+### 9. Code Compilation Verification Hooks
+**Mistake:** Recommended code changes without automated verification that they compile/type-check correctly.
+
+**Why it was wrong:** Manual reviews missed type errors (e.g., `pub_ack.sequence` vs `pub_ack.seq`, incorrect async/await usage). Errors discovered only after user ran checks or attempted execution.
+
+**Correct approach:** Set up compilation/type-checking hooks in `.claude/settings.json` to run automatically on every code edit. For Python: `mypy` for type checking, `py_compile` for syntax validation. Hooks catch errors before delivery.
+
+**Implementation:** Add PostToolUse command hooks:
+- `type: "command"` with `command: "python -m mypy {file}"` for Python files
+- Run on every Edit to .py files
+- Fail fast with clear error output
+
+**Lesson:** Automate quality gates for code changes. Compilation/type-check hooks are cheap insurance against regressions and provide immediate feedback. Similar to pre-commit hooks in CI/CD but for individual edits during development.
+
+---
+
 ## Takeaways for Future Decisions
 
 1. **Document scalability ceilings** — Know the bottlenecks (debounce lock is per-patient, acceptable)
@@ -112,3 +128,4 @@
 4. **Understand broker semantics** — Know what "pub/sub", "queue", "consumer group" mean in your specific broker
 5. **Validate against standards** — Healthcare → event streams, compliance → audit trails required
 6. **Test horizontal scaling early** — Catch threading/sharding issues before they're baked in
+7. **Automate quality gates** — Use compilation/type-check hooks on every code edit to catch errors before they surface in testing

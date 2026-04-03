@@ -3,6 +3,7 @@ import nats
 
 from typing import Any
 from nats.aio.client import Client as NATS
+from nats.js.api import ConsumerConfig
 
 class MessageBus:
     """
@@ -34,14 +35,14 @@ class MessageBus:
     async def publish_stream(self, topic: str, payload: dict) -> dict:
         """Publish to JetStream stream (durable, with sequence tracking).
 
-        Returns PublishAck metadata: {'stream': str, 'sequence': int}
+        Returns PublishAck metadata: {'stream': str, 'seq': int}
         """
         assert self._nc is not None, "MessageBus not connected — call connect() first"
         js = self._nc.jetstream()
         pub_ack = await js.publish(topic, json.dumps(payload).encode())
         return {
             "stream": pub_ack.stream,
-            "sequence": pub_ack.sequence
+            "seq": pub_ack.seq
         }
 
     async def subscribe(self, topic: str, handler: Any) -> None:
@@ -83,8 +84,10 @@ class MessageBus:
         consumer = await js.subscribe(
             subject=topic,
             cb=handler,
-            durable_name=durable_name,
-            deliver_group=deliver_group
+            config=ConsumerConfig(
+                durable_name=durable_name,
+                deliver_group=deliver_group
+            )
         )
         return consumer
 
