@@ -14,9 +14,9 @@ if os.getenv("INCLUDE_DEBUG", "false").lower() == "debugpy":
 
 from shared.message_bus import MessageBus
 from shared.singleton_store import get_singleton, register_singleton, remove_singleton
-from patient_event_reconciliation_service import PatientEventReconciliationService
-from patient_event_reconciliation_data_provider import PatientEventReconciliationDataProvider
-import internal_router as internal
+from reconciliation_event_worker_service import ReconciliationEventWorkerService
+from reconciliation_event_worker_data_provider import ReconciliationEventWorkerDataProvider
+from patient_event_reconciliation_rules import PatientEventReconciliationRules
 
 faulthandler.enable()
 
@@ -26,8 +26,8 @@ with open(_logging_config_file) as f:
 logger = logging.getLogger(__name__)
 
 _host, _port, _db = os.getenv("POSTGRES_HOST"), os.getenv("POSTGRES_PORT", "5432"), os.getenv("POSTGRES_DB")
-_worker_id = os.getenv("WORKER_ID", "reconciliation-service-default")
-data_provider = PatientEventReconciliationDataProvider(
+_worker_id = os.getenv("WORKER_ID", "reconciliation-event-worker-default")
+data_provider = ReconciliationEventWorkerDataProvider(
     reader_dsn=f"postgresql://{os.getenv('POSTGRES_READER_USER')}:{os.getenv('POSTGRES_READER_PASSWORD')}@{_host}:{_port}/{_db}",
     writer_dsn=f"postgresql://{os.getenv('POSTGRES_WRITER_USER')}:{os.getenv('POSTGRES_WRITER_PASSWORD')}@{_host}:{_port}/{_db}",
     pool_min_size=int(os.getenv("POSTGRES_POOL_MIN_SIZE", "2")),
@@ -35,33 +35,32 @@ data_provider = PatientEventReconciliationDataProvider(
 )
 bus = MessageBus(os.getenv("NATS_URL", ""))
 
-register_singleton(PatientEventReconciliationService, PatientEventReconciliationService(data_provider, bus))
+reconciliation_rules = PatientEventReconciliationRules()
+register_singleton(ReconciliationEventWorkerService, ReconciliationEventWorkerService(data_provider, reconciliation_rules, bus))
 
 
-async def _handle_reconcile_event(msg):
-    await get_singleton(PatientEventReconciliationService).handle_reconcile_event(msg)
+async def _handle_reconciliation_task(msg):
+    await get_singleton(ReconciliationEventWorkerService).handle_reconciliation_task(msg)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     await bus.connect()
-    await bus.ensure_stream("RECONCILE", ["reconcile"])
     await bus.ensure_stream("RECONCILIATION_TASKS", ["reconciliation.tasks"])
     await data_provider.connect()
-    # Patient data service publishes to reconcile stream — subscribe with queue group for round-robin distribution
-    await bus.subscribe_stream("reconcile", _handle_reconcile_event, service_name=_worker_id, message_group="reconciliation-workers")
-    logger.info("patient-event-reconciliation started")
+    # Subscribe to reconciliation tasks with queue group for round-robin distribution
+    await bus.subscribe_stream("reconciliation.tasks", _handle_reconciliation_task, service_name=_worker_id, message_group="reconciliation-event-workers")
+    logger.info("reconciliation-event-worker started")
     yield
     await bus.drain()
-    remove_singleton(PatientEventReconciliationService)
+    remove_singleton(ReconciliationEventWorkerService)
     await data_provider.disconnect()
-    logger.info("patient-event-reconciliation stopped")
+    logger.info("reconciliation-event-worker stopped")
 
 
 app = FastAPI(lifespan=lifespan)
-app.include_router(internal.router)
 
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "patient-event-reconciliation"}
+    return {"status": "ok", "service": "reconciliation-event-worker"}

@@ -11,7 +11,7 @@ A microservices-based healthcare data processing system that ingests patient dat
 | **Ingestion Gateway** | Parse raw events from sources (Medicare, Hospital, Labs). Assign `message-id` for idempotency. Publish to `raw.*` topics. |
 | **Patient Data Service** | Resolve patient identity atomically across sources via shared anchor. Maintain golden record (merged demographics). Publish to `reconcile` topic. |
 | **Patient Event Reconciliation** | Consume `reconcile` events (via queue group for horizontal scaling). Enforce idempotency via `event_logs`. Manage 5-second debounce window per patient (with Postgres row locks for sync). Enqueue reconciliation tasks to work queue when debounce expires. |
-| **Reconciliation Worker** | Consume tasks from work queue. Apply reconciliation rules to merge events from multiple sources. Publish `reconciled.events` to timeline service. Stateless, scales horizontally. |
+| **Patient Reconciliation Worker** | Consume tasks from work queue (JetStream `reconciliation.tasks`). Apply reconciliation rules to merge events from multiple sources. Publish `reconciled.events` to timeline service. Stateless, scales horizontally. |
 | **Patient Timeline** | Consume `reconciled.events`. Refresh materialized view (latest per patient). Publish `timeline.updated` after refresh. |
 | **Patient Summary** | Consume `timeline.updated`. Fetch timeline + golden record. Run LLM risk assessment. Publish `risk.computed`. Nightly batch cron job. |
 | **Patient API** | Public API gateway. Delegates to downstream services. |
@@ -22,11 +22,11 @@ A microservices-based healthcare data processing system that ingests patient dat
 
 **Ingestion Gateway** — The write entry point. Clients submit raw events (POST/PUT) representing patient data from external sources (Medicare, Hospital EHR, Labs). Parses submissions into internal JSON format, generates a stable `message-id` for idempotency, and publishes to the NATS bus. No business logic, only transformation and routing.
 
-**Patient Data Service** — The master identity resolver. Answers: "Is this patient the same person I've seen before?" Uses a shared anchor (e.g., Medicare ID) to atomically upsert patient identities across sources. Maintains the golden record — a merged view of normalized demographics. Routes resolved events downstream to the reconciliation queue for processing.
+**Patient Data Service** — The master identity resolver. Answers: "Is this patient the same person I've seen before?" Uses a shared anchor (e.g., Medicare ID) to atomically upsert patient identities across sources. Maintains the golden record — a merged view of normalized demographics. Publishes resolved events to `reconcile` stream (JetStream) for durable processing downstream.
 
-**Patient Event Reconciliation** — The debounce coordinator. Stateless, horizontally scalable service that consumes events from a NATS queue group (prevents duplicate processing across instances). Accumulates each patient's events in an append-only `event_logs` table. Manages a 5-second debounce window per patient (with a 30-minute ceiling) using Postgres row locks to serialize concurrent updates. When a debounce window expires, enqueues a reconciliation task to the work queue and sets `published_at` timestamp.
+**Patient Event Reconciliation** — The debounce coordinator. Stateless, horizontally scalable service that consumes events from the `reconcile` JetStream stream via queue group (round-robin round-robin, prevents duplicate processing across instances). Accumulates each patient's events in an append-only `event_logs` table. Manages a 5-second debounce window per patient (with a 30-minute ceiling) using Postgres row locks to serialize concurrent updates. When a debounce window expires, publishes a reconciliation task to the `reconciliation.tasks` JetStream stream and sets `published_at` timestamp.
 
-**Patient Reconciliation Worker** — The expensive reconciliation engine. Consumes reconciliation tasks from the work queue (which specify `first_event_log_id` and `last_event_log_id`). Reads the range of events from `event_logs`, applies business rules to merge conflicting data across Medicare, Hospital, and Lab sources, and produces a denormalized `ReconciledEvent` snapshot. Publishes result to `reconciled.events`. Stateless and horizontally scalable, decoupled from debounce management. Requires read-only access to `event_logs` table.
+**Patient Reconciliation Worker** — The expensive reconciliation engine. Consumes reconciliation tasks from the `reconciliation.tasks` JetStream stream via queue group (round-robin distribution, independent scaling). Each task specifies `first_event_log_id` and `last_event_log_id`. Reads the range of events from `event_logs`, applies business rules to merge conflicting data across Medicare, Hospital, and Lab sources, and produces a denormalized `ReconciledEvent` snapshot. Publishes result to `reconciled.events` (core pub/sub). Stateless and horizontally scalable, decoupled from debounce management. Requires read-only access to `event_logs` table.
 
 **Patient Timeline** — The materialized view layer. Consumes reconciled events and stores the latest state per patient. Maintains a single-row-per-patient materialized view for ultra-fast O(1) lookups. Critically, refreshes the view before publishing the `timeline.updated` event (refresh-then-publish rule) to guarantee consistency.
 
@@ -40,15 +40,15 @@ A microservices-based healthcare data processing system that ingests patient dat
 
 ## Message Bus Topics
 
-| Topic | Producer | Consumer | Purpose |
-|-------|----------|----------|---------|
-| `raw.source-a/b/c` | Ingestion Gateway | Patient Data | Raw events from source systems |
-| `patient.hydrate` | Internal | Patient Data | On-demand patient record hydration |
-| `reconcile` | Patient Data | Patient Event Reconciliation (queue group) | Stage events for reconciliation; round-robin distributed across instances |
-| `reconciliation.tasks` | Patient Event Reconciliation | Reconciliation Worker | Closed debounce windows ready for expensive reconciliation |
-| `reconciled.events` | Reconciliation Worker | Patient Timeline | Reconciled snapshot ready for timeline update |
-| `timeline.updated` | Patient Timeline | Patient Summary | Trigger risk assessment for this patient |
-| `risk.computed` | Patient Summary | Notification | Risk assessment result — route alerts |
+| Topic | Type | Producer | Consumer | Purpose |
+|-------|------|----------|----------|---------|
+| `raw.source-a/b/c` | NATS Core | Ingestion Gateway | Patient Data | Raw events from source systems |
+| `patient.hydrate` | NATS Core | Internal | Patient Data | On-demand patient record hydration |
+| `reconcile` | **JetStream Stream** | Patient Data | Patient Event Reconciliation (queue group) | Durable event stream; round-robin distribution via queue group |
+| `reconciliation.tasks` | **JetStream Stream** | Patient Event Reconciliation | Patient Reconciliation Worker (queue group) | Durable work queue; round-robin distribution for independent scaling |
+| `reconciled.events` | NATS Core | Patient Reconciliation Worker | Patient Timeline | Reconciled snapshot ready for timeline update |
+| `timeline.updated` | NATS Core | Patient Timeline | Patient Summary | Trigger risk assessment for this patient |
+| `risk.computed` | NATS Core | Patient Summary | Notification | Risk assessment result — route alerts |
 
 ## Data Flow
 
@@ -65,14 +65,15 @@ graph TD
     PD -->|build golden record| PD
     PD -->|publish to reconcile| BUS
     
-    BUS -->|reconcile<br/>queue_group=reconciliation| RE["Reconciliation Service<br/>(Stateless, N instances)"]
+    BUS -->|reconcile<br/>(JetStream, queue_group)| RE["Patient Event Reconciliation<br/>(Stateless, N instances)"]
     RE -->|idempotency check<br/>event_logs.message_id| RE
     RE -->|append to event_logs| RE
-    RE -->|debounce 5s per patient<br/>row locks| RE
-    RE -->|publish reconciliation.tasks| BUS
+    RE -->|debounce 5s per patient<br/>Postgres row locks| RE
+    RE -->|publish to reconciliation.tasks<br/>(JetStream stream)| BUS
     
-    BUS -->|reconciliation.tasks| RW["Reconciliation Worker<br/>(Stateless, N instances)"]
-    RW -->|apply rules<br/>merge events| RW
+    BUS -->|reconciliation.tasks<br/>(JetStream, queue_group)| RW["Patient Reconciliation Worker<br/>(Stateless, N instances)"]
+    RW -->|fetch event_log_between| RE
+    RW -->|apply reconciliation rules<br/>merge events| RW
     RW -->|publish reconciled.events| BUS
     
     BUS -->|reconciled.events| TL["Timeline Service"]
@@ -113,14 +114,14 @@ graph TD
 ### Debouncing (Reconciliation Service Owned, Scalable)
 - **Why**: Multiple events from same source batch should be reconciled together, not individually
 - **How**: 5-second debounce window per patient with hard deadline (30 minutes max)
-  - Reconciliation Service instances subscribe to `reconcile` topic with `queue_group="reconciliation"` (NATS round-robins messages, prevents duplicates)
+  - Reconciliation Service instances subscribe to `reconcile` JetStream stream with `service_name` (unique per instance) and `message_group="reconciliation-workers"` (queue group for round-robin distribution)
   - Each instance inserts event log (append-only, idempotent via `message_id`)
-  - Uses `SELECT ... FOR UPDATE` on `pending_publish_debouncer` row to serialize concurrent updates for the same patient
+  - Uses `SELECT ... FOR UPDATE` on `pending_publish_debouncer` row within a `writer_transaction()` context to serialize concurrent updates for the same patient
   - New event within window: extend timer, update `last_event_log_id` (under lock)
-  - Timer expires: close window, enqueue reconciliation task to work queue, set `published_at = NOW()`
+  - Timer expires: close window, publish reconciliation task to `reconciliation.tasks` JetStream stream, set `published_at = NOW()`
   - Exceeds ceiling: close old window, start new one
-- **Synchronization**: Postgres row locks (per-patient, fine-grained). Lock contention acceptable because debounce hold time is milliseconds (just state updates). Expensive reconciliation work happens in work queue, outside the lock.
-- **Source of Truth**: Append-only `event_logs` table (NATS has no persistence)
+- **Synchronization**: Postgres row locks (per-patient, fine-grained) managed via `writer_transaction()` context manager. Lock contention acceptable because debounce hold time is milliseconds (just state updates). Expensive reconciliation work happens in separate worker service, outside the lock.
+- **Source of Truth**: Append-only `event_logs` table + JetStream persistence for both `reconcile` and `reconciliation.tasks` streams
 
 ### Idempotency
 - Every inbound event gets `message_id = SHA256(source_id + version + source_system)`
@@ -145,15 +146,16 @@ graph TD
 - Pool sizes configurable via env vars `POSTGRES_POOL_MIN_SIZE` / `POSTGRES_POOL_MAX_SIZE`
 
 ### Stateless Workers with Horizontal Scaling
-- **Worker instances** (not threads) consume tasks from `reconciliation.tasks` queue
+- **Patient Reconciliation Worker** instances (not threads) consume tasks from `reconciliation.tasks` JetStream stream with queue group (round-robin distribution)
 - Each instance is stateless and independently scalable
 - Auto-scaling based on queue depth:
   - **Development**: Single worker instance (Docker Compose)
-  - **Production (Kubernetes)**: KEDA auto-scaler (min=2, max=20 replicas)
-  - **Production (AWS ECS)**: Auto Scaling Group (min=2, max=20 tasks)
-- **Fault tolerance**: Instance crash → task returned to queue, picked up by another instance
-- **Independent deployment**: Worker code updates without restarting Reconciliation Service
-- **Database access**: Read-only to `event_logs`, write to `resolved_events`
+  - **Production (Kubernetes)**: KEDA auto-scaler (min=2, max=20 replicas based on `reconciliation.tasks` stream depth)
+  - **Production (AWS ECS)**: Auto Scaling Group (min=2, max=20 tasks based on SQS equivalent)
+- **Fault tolerance**: Instance crash → task returned to queue (JetStream re-delivers), picked up by another instance
+- **Independent deployment**: Worker code updates without restarting Patient Event Reconciliation service
+- **Database access**: Read-only to `event_logs`, write to `reconciled_events`
+- **Message acknowledgment**: Explicit `msg.ack()` on success, `msg.nak()` on failure enables re-delivery on crash
 
 ### Module-Level Instantiation
 - Services and data providers created at **module import time** (not in lifespan)
@@ -162,11 +164,11 @@ graph TD
 
 ## Technology Stack
 
-- **Message Bus**: NATS core (pub/sub only, no persistence — mitigated by `event_logs`)
-- **Database**: PostgreSQL 16 with per-service schemas
-- **ORM**: asyncpg (async Python driver, no ORM)
+- **Message Bus**: NATS with JetStream for durable streams (`reconcile`, `reconciliation.tasks`) and core pub/sub for fire-and-forget topics (`reconciled.events`, `timeline.updated`, etc.)
+- **Database**: PostgreSQL 16 with per-service schemas and asyncpg connection pooling
+- **ORM**: asyncpg (async Python driver, no ORM) with raw SQL
 - **Framework**: FastAPI + async/await throughout
-- **Container**: Docker Compose (dev) — one service per container
+- **Container**: Docker Compose (dev) — one service per container with UVicorn
 - **Package Management**: uv + pyproject.toml (monorepo)
 
 ## Deployment and Scaling Strategy
@@ -179,13 +181,13 @@ graph TD
 - PostgreSQL: Single instance
 
 ### Production (Kubernetes)
-**Reconciliation Service:**
+**Patient Event Reconciliation Service:**
 - Deployment: 3-5 replicas (stateless, load-balanced)
-- Queue group: `queue_group="reconciliation"` ensures round-robin without duplicates
+- Queue group: `message_group="reconciliation-workers"` ensures round-robin without duplicates across service_name instances
 
-**Reconciliation Worker:**
+**Patient Reconciliation Worker:**
 - Deployment: Base 2 replicas, KEDA auto-scales (max 20)
-- Scaler: Watches `reconciliation.tasks` queue depth
+- Scaler: Watches `reconciliation.tasks` JetStream stream depth
 - Scale-up trigger: Queue depth > 100 tasks
 - Scale-down trigger: Queue depth < 10 tasks
 
@@ -199,14 +201,14 @@ graph TD
 - Per-service read replicas for scaling
 
 ### Production (AWS)
-**Reconciliation Service:**
+**Patient Event Reconciliation Service:**
 - ECS Service with auto-scaling (target: 3-5 tasks)
-- Load balancer for NATS events routing
+- Load balancer for NATS JetStream stream routing
 
-**Reconciliation Worker:**
-- ECS Service with auto-scaling based on SQS queue depth
+**Patient Reconciliation Worker:**
+- ECS Service with auto-scaling based on `reconciliation.tasks` stream depth
 - Min: 2 tasks, Max: 20 tasks
-- CloudWatch alarm: Scale up if `ApproximateNumberOfMessagesVisible > 100`
+- CloudWatch alarm: Scale up if queue depth > 100 tasks
 
 **Message Bus:**
 - NATS on EC2/ECS, or switch to SQS/SNS for simpler ops
@@ -240,10 +242,10 @@ Source Event → Ingestion → Event Log → Debounce → Reconcile → Resolved
 
 | Tradeoff | Choice | Rationale |
 |----------|--------|-----------|
-| **Message Persistence** | NATS core (no persistence) | Simpler setup; mitigated by `event_logs` audit table |
-| **Horizontal Scaling** | NATS queue groups + Postgres row locks | Reconciliation service scales horizontally via queue groups (no JetStream needed). Row lock contention on debounce is per-patient (fine-grained), acceptable for MVP. |
-| **Debounce Synchronization** | Postgres row locks (FOR UPDATE) | Serializes concurrent updates for same patient. Lock hold time is milliseconds. Expensive reconciliation work happens in separate work queue layer (scales independently). |
-| **Patient Timeline View** | Refresh entire view, not per-patient | Acceptable for POC; per-patient refresh would need JetStream |
-| **Data Standards** | Plain JSON, no shared schema | Flexibility for each service; coupling risk if contracts drift |
+| **Message Persistence** | NATS JetStream for critical streams (`reconcile`, `reconciliation.tasks`); NATS core for fire-and-forget topics | Durability for work queues + identity stream; simpler pub/sub for downstream. `event_logs` table provides audit trail and replay capability. |
+| **Horizontal Scaling** | JetStream queue groups (`service_name` + `message_group`) + Postgres row locks | Patient Event Reconciliation scales via queue group round-robin; Patient Reconciliation Worker scales independently. Row lock contention on debounce is per-patient (fine-grained), acceptable. |
+| **Debounce Synchronization** | Postgres `SELECT ... FOR UPDATE` in transaction | Serializes concurrent updates for same patient via `writer_transaction()` context manager. Lock hold time is milliseconds (just state updates). Expensive work happens in separate worker. |
+| **Patient Timeline View** | Refresh entire view after each reconciliation | Acceptable for MVP; could optimize per-patient refresh in production with separate transaction/notification |
+| **Data Standards** | Plain JSON, no shared schema registry | Flexibility for each service; coupling risk if contracts drift. Mitigated by interface versioning in schema. |
 | **LLM Backend** | Mocked dictionary for POC | Fast iteration; swap in Anthropic API / Ollama / LangGraph later |
-| **Single Postgres** | Per-service schemas, one DB instance | Sufficient for learning; production would use dedicated per-service DBs |
+| **Single Postgres** | Per-service schemas, one DB instance | Sufficient for learning; production would use dedicated per-service DBs + read replicas |

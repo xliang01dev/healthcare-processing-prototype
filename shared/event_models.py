@@ -201,3 +201,25 @@ class ReconciledEvent(BaseModel):
     resolution_log: Optional[str] = Field(None, description="How conflicts were resolved during reconciliation")
     created_at: datetime = Field(description="When this reconciliation was created")
 
+
+# ---------------------------------------------------------------------------
+# Reconciliation Task
+# ---------------------------------------------------------------------------
+
+
+class ReconciliationTask(BaseModel):
+    """
+    Task submitted to the reconciliation worker to process a debounce window.
+
+    Published by: Patient Event Reconciliation Service (when debounce window expires)
+    Consumed by: Reconciliation Event Worker (durable queue with round-robin distribution)
+
+    Contains the range of event_logs [start_event_log_id, end_event_log_id] to reconcile
+    for a specific patient. The worker fetches these events, applies reconciliation rules,
+    and publishes the result to reconciled.events.
+    """
+    id: str = Field(description="UUID for this task (for idempotency and tracing)")
+    canonical_patient_id: str = Field(description="Patient identifier to reconcile")
+    start_event_log_id: int = Field(description="First event log ID in the debounce window")
+    end_event_log_id: int = Field(description="Last event log ID in the debounce window")
+

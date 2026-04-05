@@ -69,11 +69,10 @@ class PatientDataService:
         data["source_system_id"] = result.source_system_id
 
         try:
-            await self.bus.publish(
-                topic=f"reconcile.{source_system_name.lower()}",
+            await self.bus.publish_stream(
+                topic="reconcile",
                 payload=data
             )
-            await self.bus.flush()
         except nats.errors.UnexpectedEOF:
             # Connection may have been closed, but publish was queued
             pass

@@ -1,4 +1,5 @@
 import asyncpg
+from contextlib import asynccontextmanager
 from typing import Any, cast
 
 
@@ -77,3 +78,17 @@ class DataProvider:
         """Execute a statement with RETURNING clause (e.g., INSERT ... RETURNING)."""
         assert self._writer is not None, "DataProvider not connected — call connect() first"
         return await self._writer.fetchrow(sql, *args)
+
+    @asynccontextmanager
+    async def writer_transaction(self):
+        """Acquire a writer connection with an open transaction (for SELECT FOR UPDATE).
+
+        Usage:
+            async with self.data_provider.writer_transaction() as conn:
+                result = await conn.fetchrow("SELECT ... FOR UPDATE", ...)
+                await conn.execute("UPDATE ...", ...)
+        """
+        assert self._writer is not None, "DataProvider not connected — call connect() first"
+        async with self._writer.acquire() as conn:
+            async with conn.transaction():
+                yield conn

@@ -3,7 +3,7 @@ import nats
 
 from typing import Any
 from nats.aio.client import Client as NATS
-from nats.js.api import ConsumerConfig
+from nats.js.api import ConsumerConfig, StreamConfig
 
 class MessageBus:
     """
@@ -54,28 +54,19 @@ class MessageBus:
         self,
         topic: str,
         handler: Any,
-        durable_name: str,
-        deliver_group: str
+        service_name: str,
+        message_group: str
     ) -> Any:
         """Subscribe to JetStream stream with consumer group (durable, with acknowledgment).
 
         Args:
             topic: Stream subject (e.g., "reconciliation.tasks")
             handler: Async callback function that receives message
-            durable_name: Unique identifier per instance (e.g., "worker-1", "worker-2")
-            deliver_group: Shared group name for round-robin (e.g., "reconciliation-workers")
+            service_name: Unique identifier per instance (e.g., "worker-1", "worker-2")
+            message_group: Shared group name for round-robin (e.g., "reconciliation-workers")
 
         Returns:
             JetStream consumer subscription (caller handles msg.ack()/msg.nak())
-
-        Example:
-            # All workers use same deliver_group but unique durable_name per instance
-            await bus.subscribe_stream(
-                topic="reconciliation.tasks",
-                handler=process_task,
-                durable_name="worker-1",                    # Unique per instance
-                deliver_group="reconciliation-workers"      # Same for all workers
-            )
         """
         assert self._nc is not None, "MessageBus not connected — call connect() first"
         js = self._nc.jetstream()
@@ -85,8 +76,8 @@ class MessageBus:
             subject=topic,
             cb=handler,
             config=ConsumerConfig(
-                durable_name=durable_name,
-                deliver_group=deliver_group
+                durable_name=service_name,
+                deliver_group=message_group
             )
         )
         return consumer
@@ -98,3 +89,18 @@ class MessageBus:
     async def drain(self) -> None:
         if self._nc is not None:
             await self._nc.drain()
+
+    async def ensure_stream(self, name: str, subjects: list[str]) -> None:
+        """Create a JetStream stream if it does not already exist (idempotent).
+
+        Args:
+            name: Stream name (e.g., "RECONCILE", "RECONCILIATION_TASKS")
+            subjects: List of subject patterns (e.g., ["reconcile"], ["reconciliation.tasks"])
+        """
+        assert self._nc is not None, "MessageBus not connected — call connect() first"
+        js = self._nc.jetstream()
+        try:
+            await js.add_stream(config=StreamConfig(name=name, subjects=subjects))
+        except Exception:
+            # Stream already exists, continue
+            pass

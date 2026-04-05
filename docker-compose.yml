@@ -39,7 +39,7 @@ services:
     ports:
       - "4222:4222"
       - "8222:8222"   # monitoring
-    command: ["--http_port", "8222"]
+    command: ["--http_port", "8222", "--jetstream"]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8222/healthz || exit 1"]
       interval: 5s
@@ -105,6 +105,7 @@ services:
         INCLUDE_DEBUG: debugpy
     environment:
       INCLUDE_DEBUG: debugpy
+      WORKER_ID: reconciliation-service-1
       NATS_URL: nats://nats:4222
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
@@ -222,6 +223,36 @@ services:
       - "8006:8006"
       - "5684:5678"  # debugpy
     depends_on:
+      nats:
+        condition: service_healthy
+    networks:
+      - healthcare-service-network
+
+  patient-reconciliation-worker:
+    build:
+      context: .
+      dockerfile: services/patient-reconciliation-worker/infra/Dockerfile
+      args:
+        INCLUDE_DEBUG: debugpy
+    environment:
+      INCLUDE_DEBUG: debugpy
+      WORKER_ID: patient-reconciliation-worker-1
+      NATS_URL: nats://nats:4222
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: healthcare
+      POSTGRES_READER_USER: hs_reader
+      POSTGRES_READER_PASSWORD: hs_reader
+      POSTGRES_WRITER_USER: hs_writer
+      POSTGRES_WRITER_PASSWORD: hs_writer
+      POSTGRES_POOL_MIN_SIZE: 2
+      POSTGRES_POOL_MAX_SIZE: 5
+    ports:
+      - "8008:8008"
+      - "5686:5678"  # debugpy
+    depends_on:
+      postgres:
+        condition: service_healthy
       nats:
         condition: service_healthy
     networks:

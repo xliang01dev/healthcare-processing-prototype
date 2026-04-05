@@ -47,6 +47,7 @@ async def _handle_source_event(msg):
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     await bus.connect()
+    await bus.ensure_stream("RECONCILE", ["reconcile"])
     await data_provider.connect()
     logger.info("lifespan: data provider connected")
 

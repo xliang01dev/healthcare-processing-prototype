@@ -158,3 +158,87 @@ class PatientEventReconciliationDataProvider(DataProvider):
         # TODO: INSERT INTO patient_event_reconciliation.reconciliation_conflicts
         #   (canonical_patient_id, source_system_ids, conflict_type, detail)
         #   VALUES ($1, $2, $3, $4);
+
+    async def fetch_pending_publish_with_lock(self, canonical_patient_id: str, conn) -> PendingPublish | None:
+        """Fetch pending publish row with SELECT FOR UPDATE lock.
+
+        Must be called inside a writer_transaction() context. Returns the row
+        with an exclusive lock, preventing concurrent updates from other instances.
+        """
+        logger.info("fetch_pending_publish_with_lock: canonical_patient_id=%s", canonical_patient_id)
+        sql = """
+            SELECT id, canonical_patient_id, first_event_log_id, last_event_log_id,
+                   scheduled_after, ceiling_at, published_at, updated_at
+            FROM patient_event_reconciliation.pending_publish_debouncer
+            WHERE canonical_patient_id = $1 AND published_at IS NULL
+            FOR UPDATE
+        """
+        row = await conn.fetchrow(sql, canonical_patient_id)
+        if row:
+            return PendingPublish(
+                id=row[0],
+                canonical_patient_id=row[1],
+                first_event_log_id=row[2],
+                last_event_log_id=row[3],
+                scheduled_after=row[4],
+                ceiling_at=row[5],
+                published_at=row[6],
+                updated_at=row[7],
+            )
+        return None
+
+    async def insert_pending_publish_tx(
+        self,
+        canonical_patient_id: str,
+        event_log_id: int,
+        scheduled_after: datetime,
+        ceiling_at: datetime,
+        conn
+    ) -> None:
+        """Insert pending publish row within a transaction."""
+        logger.info(
+            "insert_pending_publish_tx: canonical_patient_id=%s event_log_id=%s scheduled_after=%s ceiling_at=%s",
+            canonical_patient_id, event_log_id, scheduled_after, ceiling_at
+        )
+        sql = """
+            INSERT INTO patient_event_reconciliation.pending_publish_debouncer
+            (canonical_patient_id, first_event_log_id, last_event_log_id, scheduled_after, ceiling_at)
+            VALUES ($1, $2, $3, $4, $5)
+        """
+        await conn.execute(sql, canonical_patient_id, event_log_id, event_log_id, scheduled_after, ceiling_at)
+
+    async def update_pending_publish_tx(
+        self,
+        canonical_patient_id: str,
+        event_log_id: int,
+        scheduled_after: datetime,
+        conn
+    ) -> None:
+        """Update pending publish row within a transaction."""
+        logger.info(
+            "update_pending_publish_tx: canonical_patient_id=%s event_log_id=%s scheduled_after=%s",
+            canonical_patient_id, event_log_id, scheduled_after,
+        )
+        sql = """
+            UPDATE patient_event_reconciliation.pending_publish_debouncer
+            SET last_event_log_id = $1,
+                scheduled_after = $2,
+                updated_at = NOW()
+            WHERE canonical_patient_id = $3 AND published_at IS NULL
+        """
+        await conn.execute(sql, event_log_id, scheduled_after, canonical_patient_id)
+
+    async def update_pending_published_at_tx(
+        self,
+        canonical_patient_id: str,
+        published_at: datetime,
+        conn
+    ) -> None:
+        """Update published_at timestamp within a transaction."""
+        logger.info("update_pending_published_at_tx: canonical_patient_id=%s published_at=%s", canonical_patient_id, published_at)
+        sql = """
+            UPDATE patient_event_reconciliation.pending_publish_debouncer
+            SET published_at = $1
+            WHERE canonical_patient_id = $2 AND published_at IS NULL
+        """
+        await conn.execute(sql, published_at, canonical_patient_id)
