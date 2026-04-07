@@ -57,6 +57,7 @@ def _print_menu(patient: dict) -> None:
     print()
     print(f"  [pi] Fetch patient info")
     print(f"  [pr] Fetch patient recommendation")
+    print(f"  [pt] Fetch patient timeline")
     print()
     for key, (label, topic) in _SOURCE_LABELS.items():
         print(f"  [{key}]  {label:<20} {topic}")
@@ -98,6 +99,17 @@ def _print_recommendation(record: dict[str, Any]) -> None:
     """Display patient recommendation in a readable format."""
     print(f"\n{_DIVIDER}")
     print("  Patient Recommendation")
+    print(_DIVIDER)
+    pretty = json.dumps(record, indent=4, default=str)
+    for line in pretty.splitlines():
+        print(f"     {line}")
+    print()
+
+
+def _print_timeline(record: dict[str, Any]) -> None:
+    """Display patient timeline in a readable format."""
+    print(f"\n{_DIVIDER}")
+    print("  Patient Timeline")
     print(_DIVIDER)
     pretty = json.dumps(record, indent=4, default=str)
     for line in pretty.splitlines():
@@ -164,6 +176,13 @@ async def run(gateway_url: str, patient_api_url: str) -> None:
                     _print_recommendation(recommendation)
                 else:
                     print(f"\n  ✗  Could not fetch recommendation for {patient['medicare_id']}\n")
+
+            elif choice == "pt":
+                timeline = await client.fetch_patient_timeline(patient["medicare_id"])
+                if timeline:
+                    _print_timeline(timeline)
+                else:
+                    print(f"\n  ✗  Could not fetch timeline for {patient['medicare_id']}\n")
 
             elif choice == "r":
                 subject, event = build_random(patient)

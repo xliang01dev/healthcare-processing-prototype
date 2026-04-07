@@ -3,12 +3,10 @@ import logging
 import httpx
 
 from models import (
-    ConflictsResponse,
     PatientInfoResponse,
-    RecommendationRequest,
     RecommendationResponse,
-    RecommendationsResponse,
     TimelineResponse,
+    TimelineEventsResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -75,10 +73,28 @@ class PatientCoordinatorService:
             logger.error("Failed to resolve medicare_id: %s", e)
             return None
 
-    async def get_patient_timelines(
-        self, canonical_patient_id: str, page: int, page_size: int
+    async def get_patient_timeline_latest(
+        self, canonical_patient_id: str
     ) -> TimelineResponse:
-        logger.info("get_patient_timelines: canonical_patient_id=%s page=%s page_size=%s", canonical_patient_id, page, page_size)
+        logger.info("get_patient_timeline_latest: canonical_patient_id=%s", canonical_patient_id)
+        try:
+            url = f"{self.timeline_url}/internal/patient/timeline/latest"
+            params = {"canonical_patient_id": canonical_patient_id}
+            response = await self.http_client.get(url, params=params)
+            response.raise_for_status()
+
+            response_json = response.json()
+            if response_json:
+                return TimelineResponse.model_validate(response_json)
+            return TimelineResponse()
+        except httpx.HTTPError as e:
+            logger.error("Failed to fetch latest timeline: %s", e)
+            return TimelineResponse()
+
+    async def get_patient_timeline_events(
+        self, canonical_patient_id: str, page: int, page_size: int
+    ) -> TimelineEventsResponse:
+        logger.info("get_patient_timeline_events: canonical_patient_id=%s page=%s page_size=%s", canonical_patient_id, page, page_size)
         try:
             url = f"{self.timeline_url}/internal/patient/timeline/history"
             params = {
@@ -91,11 +107,11 @@ class PatientCoordinatorService:
 
             response_json = response.json()
             if response_json:
-                return TimelineResponse.model_validate(response_json)
-            return TimelineResponse()
+                return TimelineEventsResponse.model_validate(response_json)
+            return TimelineEventsResponse()
         except httpx.HTTPError as e:
             logger.error("Failed to fetch timelines: %s", e)
-            return TimelineResponse()
+            return TimelineHistoryResponse()
 
     async def get_patient_recommendation(
         self, canonical_patient_id: str
@@ -113,10 +129,3 @@ class PatientCoordinatorService:
         except httpx.HTTPError as e:
             logger.error("Failed to fetch recommendation: %s", e)
             return RecommendationResponse()
-
-    async def get_patient_conflicts(
-        self, canonical_patient_id: str, page: int, page_size: int
-    ) -> ConflictsResponse:
-        logger.info("get_patient_conflicts: canonical_patient_id=%s page=%s page_size=%s", canonical_patient_id, page, page_size)
-        # TODO: GET {reconciliation_url}/internal/patient/{canonical_patient_id}/conflicts?page={page}&page_size={page_size}
-        return ConflictsResponse()

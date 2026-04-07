@@ -84,6 +84,31 @@ class APIClient:
         except httpx.HTTPError:
             return None
 
+    async def fetch_patient_timeline(self, medicare_id: str) -> dict[str, Any] | None:
+        """Fetch latest patient timeline for a patient by medicare_id.
+
+        Resolves medicare_id to canonical_patient_id first, then fetches latest timeline.
+        Returns timeline dict or None if not found.
+        """
+        assert self._client is not None, "APIClient not connected"
+
+        # First resolve medicare_id to canonical_patient_id
+        canonical_patient_id = await self.resolve_medicare_to_canonical_patient_id(medicare_id)
+        if not canonical_patient_id:
+            return None
+
+        # Then fetch timeline using canonical_patient_id
+        url = f"{self._patient_api_url}/patient/{canonical_patient_id}/timeline"
+        try:
+            response = await self._client.get(url)
+            response.raise_for_status()
+            data = response.json()
+            if isinstance(data, dict):
+                return data
+            return None
+        except httpx.HTTPError:
+            return None
+
     async def submit_event(self, source: str, payload: dict[str, Any]) -> None:
         """Submit an event to the Ingestion Gateway.
 
