@@ -3,7 +3,7 @@ import logging
 
 from timeline_data_provider import TimelineDataProvider
 from shared.message_bus import MessageBus
-from shared.event_models import ReconciledEvent
+from shared.event_models import ReconciledEvent, PatientTimeline
 
 logger = logging.getLogger(__name__)
 
@@ -13,9 +13,15 @@ class TimelineService:
         self.data_provider = data_provider
         self.bus = bus
 
-    async def fetch_patient_timeline(self, canonical_patient_id: str, page: int, page_size: int) -> list:
-        logger.info("fetch_patient_timeline: canonical_patient_id=%s page=%s page_size=%s", canonical_patient_id, page, page_size)
-        return await self.data_provider.fetch_patient_timeline(canonical_patient_id, page, page_size)
+    async def fetch_patient_timeline_latest(self, canonical_patient_id: str) -> dict | None:
+        """Fetch the latest timeline event (fast lookup)."""
+        logger.info("fetch_patient_timeline_latest: canonical_patient_id=%s", canonical_patient_id)
+        return await self.data_provider.fetch_patient_timeline_latest(canonical_patient_id)
+
+    async def fetch_patient_timeline_history(self, canonical_patient_id: str, page: int, page_size: int) -> list:
+        """Fetch timeline history with pagination."""
+        logger.info("fetch_patient_timeline_history: canonical_patient_id=%s page=%s page_size=%s", canonical_patient_id, page, page_size)
+        return await self.data_provider.fetch_patient_timeline_history(canonical_patient_id, page, page_size)
 
     async def handle_reconciled_event(self, msg) -> None:
         logger.info("handle_reconciled_event: data=%s", msg.data)

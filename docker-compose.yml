@@ -162,6 +162,7 @@ services:
       args:
         INCLUDE_DEBUG: debugpy
     environment:
+      INCLUDE_DEBUG: debugpy
       NATS_URL: nats://nats:4222
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
@@ -174,6 +175,8 @@ services:
       POSTGRES_POOL_MAX_SIZE: 5
       PATIENT_DATA_URL: http://patient-data:8002
       TIMELINE_URL: http://patient-timeline:8004
+      AGENT_URL: "http://host.docker.internal:11434"
+      LLM_MODEL: "mistral:latest"
     ports:
       - "8005:8005"
       - "5683:5678"  # debugpy

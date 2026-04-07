@@ -55,7 +55,8 @@ def _print_menu(patient: dict) -> None:
     print(_DIVIDER)
     print(f"  Patient: {_patient_label(patient)}")
     print()
-    print(f"  [f]  Fetch patient info")
+    print(f"  [pi] Fetch patient info")
+    print(f"  [pr] Fetch patient recommendation")
     print()
     for key, (label, topic) in _SOURCE_LABELS.items():
         print(f"  [{key}]  {label:<20} {topic}")
@@ -86,6 +87,17 @@ def _print_golden_record(record: dict[str, Any]) -> None:
     """Display patient info in a readable format."""
     print(f"\n{_DIVIDER}")
     print("  Patient Info")
+    print(_DIVIDER)
+    pretty = json.dumps(record, indent=4, default=str)
+    for line in pretty.splitlines():
+        print(f"     {line}")
+    print()
+
+
+def _print_recommendation(record: dict[str, Any]) -> None:
+    """Display patient recommendation in a readable format."""
+    print(f"\n{_DIVIDER}")
+    print("  Patient Recommendation")
     print(_DIVIDER)
     pretty = json.dumps(record, indent=4, default=str)
     for line in pretty.splitlines():
@@ -139,12 +151,19 @@ async def run(gateway_url: str, patient_api_url: str) -> None:
             elif choice == "p":
                 patient = _print_patient_picker(patient)
 
-            elif choice == "f":
+            elif choice == "f" or choice == "pi":
                 record = await client.fetch_golden_record(patient["medicare_id"])
                 if record:
                     _print_golden_record(record)
                 else:
                     print(f"\n  ✗  Could not fetch patient info for {patient['medicare_id']}\n")
+
+            elif choice == "pr":
+                recommendation = await client.fetch_recommendation(patient["medicare_id"])
+                if recommendation:
+                    _print_recommendation(recommendation)
+                else:
+                    print(f"\n  ✗  Could not fetch recommendation for {patient['medicare_id']}\n")
 
             elif choice == "r":
                 subject, event = build_random(patient)

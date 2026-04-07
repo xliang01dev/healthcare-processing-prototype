@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from models import (
     ConflictsResponse,
@@ -8,6 +8,7 @@ from models import (
     RecommendationResponse,
     RecommendationsResponse,
     PatientInfoResponse,
+    PatientIdMapping,
     TimelineResponse,
 )
 from patient_coordinator_service import PatientCoordinatorService
@@ -18,6 +19,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/patient")
 
 
+@router.get("/internal/resolve", response_model=PatientIdMapping)
+async def resolve_medicare_to_canonical_patient_id(medicare_id: str):
+    """Resolve medicare_id to canonical_patient_id."""
+    logger.info("GET /patient/internal/resolve medicare_id=%s", medicare_id)
+    coordinator = get_singleton(PatientCoordinatorService)
+    canonical_patient_id = await coordinator.resolve_medicare_id_to_canonical_patient_id(medicare_id)
+    return PatientIdMapping(
+        medicare_id=medicare_id,
+        canonical_patient_id=canonical_patient_id
+    )
+
+
 @router.get("/medicare/{medicare_id}", response_model=PatientInfoResponse)
 async def get_patient_info_by_medicare(medicare_id: str):
     """Fetch patient golden record by medicare_id."""
@@ -25,7 +38,7 @@ async def get_patient_info_by_medicare(medicare_id: str):
     coordinator = get_singleton(PatientCoordinatorService)
 
     # Resolve medicare_id to canonical_patient_id
-    canonical_patient_id = await coordinator.resolve_medicare_id_to_canonical(medicare_id)
+    canonical_patient_id = await coordinator.resolve_medicare_id_to_canonical_patient_id(medicare_id)
     logger.info("_get_patient_info_by_medicare_ canonical_patient_id=%s", canonical_patient_id)
     if canonical_patient_id:
         return await coordinator.get_patient_info(canonical_patient_id, medicare_id)

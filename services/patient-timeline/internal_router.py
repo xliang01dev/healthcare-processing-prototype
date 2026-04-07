@@ -10,7 +10,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.get("/internal/patient/timeline")
-async def get_patient_timeline(canonical_patient_id: str = "", page: int = 1, page_size: int = 100):
-    logger.info("GET /internal/patient/timeline canonical_patient_id=%s page=%s page_size=%s", canonical_patient_id, page, page_size)
-    return await get_singleton(TimelineService).fetch_patient_timeline(canonical_patient_id, page, page_size)
+@router.get("/internal/patient/timeline/latest")
+async def get_patient_timeline_latest(canonical_patient_id: str = ""):
+    logger.info("GET /internal/patient/timeline/latest canonical_patient_id=%s", canonical_patient_id)
+    return await get_singleton(TimelineService).fetch_patient_timeline_latest(canonical_patient_id)
+
+
+@router.get("/internal/patient/timeline/history")
+async def get_patient_timeline_history(canonical_patient_id: str = "", page: int = 1, page_size: int = 100):
+    logger.info("GET /internal/patient/timeline/history canonical_patient_id=%s page=%s page_size=%s", canonical_patient_id, page, page_size)
+    return await get_singleton(TimelineService).fetch_patient_timeline_history(canonical_patient_id, page, page_size)

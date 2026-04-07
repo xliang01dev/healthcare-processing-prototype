@@ -2,8 +2,12 @@ import logging
 import json
 import httpx
 
-from patient_summary_data_provider import PatientSummaryDataProvider
 from shared.message_bus import MessageBus
+from shared.event_models import PatientTimeline, ReconciledEvent
+
+from patient_summary_data_provider import PatientSummaryDataProvider
+from patient_summary_models import PatientRecommendation
+from agentic_handler import AgenticHandler
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +16,7 @@ class PatientSummaryService:
     def __init__(
         self,
         data_provider: PatientSummaryDataProvider,
+        agentic_handler: AgenticHandler,
         http_client: httpx.AsyncClient,
         bus: MessageBus,
         timeline_url: str,
@@ -22,16 +27,17 @@ class PatientSummaryService:
         self.bus = bus
         self.timeline_url = timeline_url
         self.patient_data_url = patient_data_url
+        self.agentic_handler = agentic_handler
 
-    async def _fetch_patient_timeline(self, canonical_patient_id: str) -> list:
-        logger.info("_fetch_patient_timeline: canonical_patient_id=%s", canonical_patient_id)
-        # TODO: GET {timeline_url}/internal/patient/timeline?canonical_patient_id={id}
+    async def _fetch_patient_timeline_latest(self, canonical_patient_id: str) -> PatientTimeline:
+        logger.info("_fetch_patient_timeline_latest: canonical_patient_id=%s", canonical_patient_id)
         response = await self.http_client.get(
-            f"{self.timeline_url}/internal/patient/timeline",
+            f"{self.timeline_url}/internal/patient/timeline/latest",
             params={"canonical_patient_id": canonical_patient_id},
         )
         response.raise_for_status()
-        return response.json()
+        timeline_json = response.json()
+        return PatientTimeline.model_validate(timeline_json)
 
     async def _fetch_golden_record(self, canonical_patient_id: str) -> dict:
         logger.info("_fetch_golden_record: canonical_patient_id=%s", canonical_patient_id)
@@ -67,10 +73,40 @@ class PatientSummaryService:
         return {"queued": True, "canonical_patient_id": canonical_patient_id}
 
     async def handle_timeline_updated(self, msg) -> None:
-        timeline_json = json.loads(msg.data.decode())
-        logger.info("handle_timeline_updated: data=%s", timeline_json)
-        # TODO: Parse canonical_patient_id from msg payload.
-        # TODO: Call self._assess_patient(canonical_patient_id).
+        reconciled_event_json = json.loads(msg.data.decode())
+        reconciled_event = ReconciledEvent.model_validate_json(reconciled_event_json)
+
+        canonical_patient_id = reconciled_event.canonical_patient_id
+        logger.info("handle_timeline_updated: data=%s, patient=%s", reconciled_event_json, canonical_patient_id)
+        
+        # Fetch the patient timeline first
+        patient_timeline = await self._fetch_patient_timeline_latest(canonical_patient_id)
+        # Generate an agentic prompt for downstream agent (LLM + RAG)
+        patient_overview_info = patient_timeline.to_agent_prompt()
+        logger.info("agent_request: data=%s", patient_overview_info)
+        result = await self.agentic_handler.send_message(
+            f"Recommended next steps for patient: {patient_overview_info}"
+        )
+        logger.info("agent_response: data=%s", result)
+
+        # Try to parse as JSON; if it fails, use the result as-is as the summary
+        try:
+            result_json = json.loads(result)
+            summary = result_json.get("recommend", result)
+            risk_tier = result_json.get("risk", "medium")
+        except (json.JSONDecodeError, ValueError):
+            # LLM returned plain text, not JSON
+            summary = result
+            risk_tier = "medium"  # Default to medium risk
+
+        recommendation = PatientRecommendation(
+            canonical_patient_id=canonical_patient_id,
+            summary=summary,
+            risk_tier=risk_tier
+        )
+
+        await self.data_provider.insert_recommendation(recommendation=recommendation)
+
 
     async def run_batch(self) -> None:
         logger.info("run_batch")

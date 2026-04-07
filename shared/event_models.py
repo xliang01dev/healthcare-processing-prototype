@@ -203,6 +203,157 @@ class ReconciledEvent(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Patient Timeline
+# ---------------------------------------------------------------------------
+
+
+class PatientTimeline(BaseModel):
+    """
+    Latest timeline event for a patient from the materialized view.
+
+    This is the most recent reconciled state per patient, used for fast O(1) lookups
+    and as the foundation for patient summaries and dashboards.
+
+    Queried from: patient_timeline.patient_timeline (materialized view)
+    Updated by:   Patient Timeline Service (via REFRESH MATERIALIZED VIEW CONCURRENTLY)
+    """
+    id: int = Field(description="Primary key from timeline_events")
+    canonical_patient_id: UUID = Field(description="Patient UUID")
+    event_log_ids: list[int] = Field(description="IDs of all event_logs reconciled in this window")
+    event_processing_start: datetime = Field(description="When debounce window opened")
+    event_processing_end: datetime = Field(description="When reconciliation was triggered/completed")
+    created_at: datetime = Field(description="When this timeline event was created")
+
+    # Demographics (normalized)
+    first_name: Optional[str] = Field(None, description="Patient first name (normalized to mixed-case)")
+    last_name: Optional[str] = Field(None, description="Patient last name (normalized to mixed-case)")
+    gender: Optional[str] = Field(None, description="Patient gender (M or F, normalized)")
+
+    # Insurance & Coverage
+    primary_plan: Optional[str] = Field(None, description="Primary insurance plan name")
+    member_id: Optional[str] = Field(None, description="Insurance member ID")
+    eligibility_status: Optional[str] = Field(None, description="active, terminated, suspended")
+    network_status: Optional[str] = Field(None, description="in-network, out-of-network")
+    authorization_required: Optional[bool] = Field(None, description="Whether prior auth is required")
+    authorization_status: Optional[str] = Field(None, description="Authorization approval status")
+
+    # Current Encounter
+    admission_date: Optional[datetime] = Field(None, description="Hospital admission date")
+    discharge_date: Optional[datetime] = Field(None, description="Hospital discharge date")
+    facility_name: Optional[str] = Field(None, description="Hospital or lab facility name")
+    attending_physician: Optional[str] = Field(None, description="Responsible physician")
+    encounter_status: Optional[str] = Field(None, description="active, discharged, pending")
+
+    # Clinical - searchable text arrays
+    diagnosis_codes: list[str] = Field(default_factory=list, description="ICD diagnosis codes")
+    active_diagnoses: list[str] = Field(default_factory=list, description="Active diagnosis descriptions")
+    procedures: list[str] = Field(default_factory=list, description="Procedure codes and descriptions")
+    medications: list[str] = Field(default_factory=list, description="Current medication names")
+    allergies: list[str] = Field(default_factory=list, description="Drug/food allergies")
+    lab_results: list[str] = Field(default_factory=list, description="Lab test names and values")
+    care_team: list[str] = Field(default_factory=list, description="Provider names on care team")
+    scheduled_followups: list[str] = Field(default_factory=list, description="Scheduled appointments and referrals")
+    quality_flags: list[str] = Field(default_factory=list, description="Risk flags, complications, adverse events")
+
+    # Unstructured
+    clinical_notes: Optional[str] = Field(None, description="Provider narrative notes")
+    resolution_log: Optional[str] = Field(None, description="How conflicts were resolved during reconciliation")
+
+    def to_agent_prompt(self) -> str:
+        """
+        Format patient timeline as a natural language prompt for downstream LLM agent.
+
+        Designed for Medicare experts to determine next steps (coverage decisions,
+        authorization requirements, care coordination, etc.).
+
+        Returns:
+            str: Natural language prompt with patient demographics, coverage, encounter, and clinical data
+        """
+        paragraphs = []
+
+        # Demographics paragraph
+        demo = f"{self.first_name or '?'} {self.last_name or '?'}"
+        if self.gender:
+            demo += f" is a {self.gender.lower()}"
+        demo += " patient"
+        paragraphs.append(demo + ".")
+
+        # Coverage paragraph
+        coverage_parts = []
+        if self.primary_plan:
+            coverage_parts.append(f"enrolled in {self.primary_plan}")
+        if self.member_id:
+            coverage_parts.append(f"member ID {self.member_id}")
+        if coverage_parts:
+            coverage_text = "Patient is " + ", ".join(coverage_parts) + "."
+            if self.eligibility_status:
+                coverage_text += f" Eligibility status is {self.eligibility_status}."
+            if self.network_status:
+                coverage_text += f" {self.network_status.capitalize()} coverage."
+            if self.authorization_required is not None:
+                auth_req = "Required" if self.authorization_required else "Not required"
+                coverage_text += f" Prior authorization is {auth_req}."
+            if self.authorization_status:
+                coverage_text += f" Authorization status is {self.authorization_status}."
+            paragraphs.append(coverage_text)
+
+        # Encounter paragraph
+        encounter_parts = []
+        if self.facility_name:
+            encounter_parts.append(f"at {self.facility_name}")
+        if self.admission_date:
+            admitted = self.admission_date.strftime('%B %d, %Y') if hasattr(self.admission_date, 'strftime') else str(self.admission_date)
+            encounter_parts.append(f"admitted {admitted}")
+        if self.discharge_date:
+            discharged = self.discharge_date.strftime('%B %d, %Y') if hasattr(self.discharge_date, 'strftime') else str(self.discharge_date)
+            encounter_parts.append(f"discharged {discharged}")
+        if self.encounter_status:
+            encounter_parts.append(f"status {self.encounter_status}")
+        if self.attending_physician:
+            encounter_parts.append(f"under care of {self.attending_physician}")
+        if encounter_parts:
+            paragraphs.append("Current encounter: " + ", ".join(encounter_parts) + ".")
+
+        # Clinical summary paragraph
+        clinical_parts = []
+        if self.diagnosis_codes:
+            clinical_parts.append(f"Diagnoses: {', '.join(self.diagnosis_codes)}")
+        if self.active_diagnoses:
+            clinical_parts.append(f"Active conditions: {', '.join(self.active_diagnoses)}")
+        if self.procedures:
+            clinical_parts.append(f"Recent procedures: {', '.join(self.procedures)}")
+        if clinical_parts:
+            paragraphs.append(" ".join(clinical_parts) + ".")
+
+        # Medications paragraph
+        if self.medications:
+            paragraphs.append(f"Current medications: {', '.join(self.medications)}.")
+
+        # Allergies paragraph
+        if self.allergies:
+            paragraphs.append(f"Known allergies: {', '.join(self.allergies)}.")
+
+        # Lab results paragraph
+        if self.lab_results:
+            paragraphs.append(f"Recent lab results: {', '.join(self.lab_results)}.")
+
+        # Care team paragraph
+        if self.care_team:
+            paragraphs.append(f"Care team members: {', '.join(self.care_team)}.")
+
+        # Risk flags paragraph
+        if self.quality_flags:
+            paragraphs.append(f"Risk flags and considerations: {', '.join(self.quality_flags)}.")
+
+        # Clinical notes paragraph
+        if self.clinical_notes:
+            truncated = self.clinical_notes[:500] + "..." if len(self.clinical_notes) > 500 else self.clinical_notes
+            paragraphs.append(f"Clinical notes: {truncated}")
+
+        return "\n\n".join(paragraphs)
+
+
+# ---------------------------------------------------------------------------
 # Reconciliation Task
 # ---------------------------------------------------------------------------
 

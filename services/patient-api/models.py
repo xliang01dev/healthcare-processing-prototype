@@ -1,7 +1,11 @@
 from datetime import date, datetime
-from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+class PatientIdMapping(BaseModel):
+    medicare_id: str | None = None
+    canonical_patient_id: str | None = None
 
 
 class PatientInfoResponse(BaseModel):
@@ -17,7 +21,10 @@ class TimelineResponse(BaseModel):
 
 
 class RecommendationResponse(BaseModel):
-    stub: bool = True
+    id: int | None = Field(None, description="Primary key (DB-generated)")
+    summary: str | None = Field(None, description="Recommendation text")
+    risk_tier: str | None = Field(None, description="Risk level: high, medium, low")
+    generated_at: datetime | None = Field(None, description="When this recommendation was generated")
 
 
 class RecommendationsResponse(BaseModel):

@@ -2,7 +2,7 @@ import json
 import logging
 
 from shared.data_provider import DataProvider
-from shared.event_models import ReconciledEvent
+from shared.event_models import ReconciledEvent, PatientTimeline
 
 logger = logging.getLogger(__name__)
 
@@ -92,13 +92,26 @@ class TimelineDataProvider(DataProvider):
         logger.info("refresh_patient_timeline")
         await self.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY patient_timeline.patient_timeline")
 
-    async def fetch_patient_timeline(
-        self, canonical_patient_id: str, page: int, page_size: int
-    ) -> list:
-        logger.info("fetch_patient_timeline: canonical_patient_id=%s page=%s page_size=%s", canonical_patient_id, page, page_size)
+    async def fetch_patient_timeline_latest(self, canonical_patient_id: str) -> PatientTimeline | None:
+        """Fetch the latest timeline event from materialized view (fast O(1) lookup)."""
+        logger.info("fetch_patient_timeline_latest: canonical_patient_id=%s", canonical_patient_id)
 
         sql = """
         SELECT * FROM patient_timeline.patient_timeline
+        WHERE canonical_patient_id = $1
+        """
+
+        row = await self.fetch_row(sql, canonical_patient_id)
+        return PatientTimeline.model_validate(dict(row)) if row else None
+
+    async def fetch_patient_timeline_history(
+        self, canonical_patient_id: str, page: int, page_size: int
+    ) -> list:
+        """Fetch all timeline events for a patient (full history with pagination)."""
+        logger.info("fetch_patient_timeline_history: canonical_patient_id=%s page=%s page_size=%s", canonical_patient_id, page, page_size)
+
+        sql = """
+        SELECT * FROM patient_timeline.timeline_events
         WHERE canonical_patient_id = $1
         ORDER BY created_at DESC
         LIMIT $2 OFFSET $3

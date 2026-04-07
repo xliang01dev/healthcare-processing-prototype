@@ -8,10 +8,16 @@ import yaml
 import httpx
 from fastapi import FastAPI
 
+# Debugpy setup for VSCode remote attach
+if os.getenv("INCLUDE_DEBUG", "false").lower() == "debugpy":
+    import debugpy
+    debugpy.listen(("0.0.0.0", 5678))
+
 from shared.message_bus import MessageBus
 from shared.singleton_store import get_singleton, register_singleton, remove_singleton
 from patient_summary_service import PatientSummaryService
 from patient_summary_data_provider import PatientSummaryDataProvider
+from agentic_handler import OllamaAgentHandler
 import internal_router as internal
 
 faulthandler.enable()
@@ -28,10 +34,23 @@ data_provider = PatientSummaryDataProvider(
     pool_min_size=int(os.getenv("POSTGRES_POOL_MIN_SIZE", "2")),
     pool_max_size=int(os.getenv("POSTGRES_POOL_MAX_SIZE", "5")),
 )
+_system_prompt = (
+    "You are a healthcare professional. Review the patient data and provide up to 2 short, "
+    "actionable next steps for improved care. "
+    "Return in JSON string format as {\"recommend\": \"some_text\", \"risk\": \"critical\"|\"high\"|\"medium\"|\"low\"}"
+)
+
+agentic_provider = OllamaAgentHandler(
+    model_name=os.getenv('LLM_MODEL'),
+    api_url=os.getenv('AGENT_URL', 'http://localhost:11434'),
+    system_prompt=_system_prompt
+)
+
 http_client = httpx.AsyncClient()
 bus = MessageBus(os.getenv("NATS_URL", ""))
 register_singleton(PatientSummaryService, PatientSummaryService(
     data_provider,
+    agentic_provider,
     http_client,
     bus,
     timeline_url=os.getenv("TIMELINE_URL", ""),

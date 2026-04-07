@@ -47,13 +47,10 @@ class PatientCoordinatorService:
             logger.error("Failed to fetch patient info: %s", e)
             return PatientInfoResponse()
 
-    async def resolve_medicare_id_to_canonical(self, medicare_id: str) -> str | None:
+    async def resolve_medicare_id_to_canonical_patient_id(self, medicare_id: str) -> str | None:
         """Resolve medicare_id to canonical_patient_id via patient_data service."""
-        logger.info("resolve_medicare_id_to_canonical: medicare_id=%s", medicare_id)
+        logger.info("resolve_medicare_id_to_canonical_patient_id: medicare_id=%s", medicare_id)
         try:
-            # Query patient_data service to resolve medicare_id to canonical_patient_id
-            # Assuming there's an endpoint like /internal/patient/resolve?medicare_id={id}
-            # For now, we'll use a direct query to get the canonical_patient_id
             url = f"{self.patient_data_url}/internal/patient/resolve"
             params = {"medicare_id": medicare_id}
             response = await self.http_client.get(url, params=params)
@@ -82,22 +79,40 @@ class PatientCoordinatorService:
         self, canonical_patient_id: str, page: int, page_size: int
     ) -> TimelineResponse:
         logger.info("get_patient_timelines: canonical_patient_id=%s page=%s page_size=%s", canonical_patient_id, page, page_size)
-        # TODO: GET {timeline_url}/internal/patient/timeline?canonical_patient_id={id}&page={page}&page_size={page_size}
-        return TimelineResponse()
+        try:
+            url = f"{self.timeline_url}/internal/patient/timeline/history"
+            params = {
+                "canonical_patient_id": canonical_patient_id,
+                "page": page,
+                "page_size": page_size
+            }
+            response = await self.http_client.get(url, params=params)
+            response.raise_for_status()
+
+            response_json = response.json()
+            if response_json:
+                return TimelineResponse.model_validate(response_json)
+            return TimelineResponse()
+        except httpx.HTTPError as e:
+            logger.error("Failed to fetch timelines: %s", e)
+            return TimelineResponse()
 
     async def get_patient_recommendation(
         self, canonical_patient_id: str
     ) -> RecommendationResponse:
         logger.info("get_patient_recommendation: canonical_patient_id=%s", canonical_patient_id)
-        # TODO: GET {patient_summary_url}/internal/patient/{canonical_patient_id}/recommendation
-        return RecommendationResponse()
+        try:
+            url = f"{self.patient_summary_url}/internal/patient/{canonical_patient_id}/recommendation"
+            response = await self.http_client.get(url)
+            response.raise_for_status()
 
-    async def get_patient_recommendations(
-        self, canonical_patient_id: str, page: int, page_size: int
-    ) -> RecommendationsResponse:
-        logger.info("get_patient_recommendations: canonical_patient_id=%s page=%s page_size=%s", canonical_patient_id, page, page_size)
-        # TODO: GET {patient_summary_url}/internal/patient/{canonical_patient_id}/recommendations?page={page}&page_size={page_size}
-        return RecommendationsResponse()
+            response_json = response.json()
+            if response_json:
+                return RecommendationResponse.model_validate(response_json)
+            return RecommendationResponse()
+        except httpx.HTTPError as e:
+            logger.error("Failed to fetch recommendation: %s", e)
+            return RecommendationResponse()
 
     async def get_patient_conflicts(
         self, canonical_patient_id: str, page: int, page_size: int
@@ -105,8 +120,3 @@ class PatientCoordinatorService:
         logger.info("get_patient_conflicts: canonical_patient_id=%s page=%s page_size=%s", canonical_patient_id, page, page_size)
         # TODO: GET {reconciliation_url}/internal/patient/{canonical_patient_id}/conflicts?page={page}&page_size={page_size}
         return ConflictsResponse()
-
-    async def refresh_recommendation(self, body: RecommendationRequest) -> dict:
-        logger.info("refresh_recommendation: canonical_patient_id=%s", body.canonical_patient_id)
-        # TODO: POST {patient_summary_url}/internal/patient/recommendations
-        return {"stub": True}

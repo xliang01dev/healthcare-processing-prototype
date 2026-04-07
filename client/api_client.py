@@ -40,6 +40,50 @@ class APIClient:
         except httpx.HTTPError:
             return None
 
+    async def resolve_medicare_to_canonical_patient_id(self, medicare_id: str) -> str | None:
+        """Resolve a medicare_id to canonical_patient_id using the Patient API.
+
+        Returns canonical_patient_id string or None if not found.
+        """
+        assert self._client is not None, "APIClient not connected"
+
+        url = f"{self._patient_api_url}/patient/internal/resolve"
+        params = {"medicare_id": medicare_id}
+        try:
+            response = await self._client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+            if isinstance(data, dict) and "canonical_patient_id" in data:
+                return data["canonical_patient_id"]
+            return None
+        except httpx.HTTPError:
+            return None
+
+    async def fetch_recommendation(self, medicare_id: str) -> dict[str, Any] | None:
+        """Fetch latest recommendation for a patient by medicare_id.
+
+        Resolves medicare_id to canonical_patient_id first, then fetches recommendation.
+        Returns recommendation dict or None if not found.
+        """
+        assert self._client is not None, "APIClient not connected"
+
+        # First resolve medicare_id to canonical_patient_id
+        canonical_patient_id = await self.resolve_medicare_to_canonical_patient_id(medicare_id)
+        if not canonical_patient_id:
+            return None
+
+        # Then fetch recommendation using canonical_patient_id
+        url = f"{self._patient_api_url}/patient/{canonical_patient_id}/recommendation"
+        try:
+            response = await self._client.get(url)
+            response.raise_for_status()
+            data = response.json()
+            if isinstance(data, dict):
+                return data
+            return None
+        except httpx.HTTPError:
+            return None
+
     async def submit_event(self, source: str, payload: dict[str, Any]) -> None:
         """Submit an event to the Ingestion Gateway.
 
