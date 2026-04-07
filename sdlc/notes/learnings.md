@@ -120,6 +120,142 @@
 
 ---
 
+## 2026-04-06
+
+### 10. Patient Data Service Sharding Breaks Identity Resolution
+**Mistake:** Proposed per-source sharding to scale Patient Data Service (Medicare → shard 0, Hospital → shard 1, Labs → shard 2) to reduce contention on atomic upsert.
+
+**Why it fails:** Each shard would have its own `patients` table. Same Medicare ID assigned to different canonical UUIDs in different shards:
+- Medicare shard: MED-123 → uuid-x
+- Hospital shard: MED-123 → uuid-y (different!)
+- Labs shard: MED-123 → uuid-z (different!)
+
+Result: **Multiple canonical IDs for the same patient** — defeats the entire purpose of MPI.
+
+**Correct approach:** Single primary `patients` table (source of truth) + read replicas for SELECT queries. No sharding.
+
+**Lesson:** Identity resolution requires a single source of truth for the mapping. Sharding breaks this invariant. Don't shard identity tables; replicate them instead.
+
+---
+
+### 11. Patient Data Service Bottleneck Reassessed
+**Initial claim:** Atomic upsert on `patients(shared_identifier)` is a "medium production bottleneck" requiring future sharding mitigation.
+
+**Reality check:** For typical healthcare systems:
+- **Event distribution**: ~99% of events are for existing patients (recurring labs, claims, encounters)
+- **New patient registration**: Only ~0.5-1% of traffic (50-100/day in large health systems)
+- **Lock behavior**: Postgres row locks complete in sub-millisecond; even 5,000 concurrent new-patient inserts finish in ~100ms
+- **Real bottleneck**: Postgres write throughput (~1000 inserts/sec), not serialization
+
+**Revised assessment:** Not a real bottleneck except during specific bulk-import scenarios (nightly EHR dumps). Serialization on atomic upsert is an implementation detail, not a scaling constraint.
+
+**Correct mitigation:** Single primary + read replicas. No architectural change needed.
+
+**Lesson:** Challenge scale assumptions. Measure actual event distributions before declaring architectural constraints. New patient registration is rare; optimize for the common case (existing patient updates).
+
+---
+
+### 12. Ollama Chat API vs Generate API
+**Mistake:** Initially used `ollama.generate()` method for LLM inference, which doesn't support system prompts properly.
+
+**Why it failed:** `generate()` is for raw text completion. System prompts must be in a messages array with `{"role": "system", "content": "..."}`.
+
+**Correct API:** Use `ollama.chat()` with messages array:
+```python
+messages = [
+    {"role": "system", "content": system_prompt},
+    {"role": "user", "content": user_prompt}
+]
+response = await client.chat(model=model_name, messages=messages, stream=False)
+response.message.content  # Access result as attribute, not dict
+```
+
+**Lesson:** Understand your LLM SDK's API contract. Different methods serve different purposes. Chat API = multi-turn conversations with roles; Generate API = simple completion. Match the method to your use case.
+
+---
+
+### 13. System Prompt as Multi-Line String
+**Mistake:** Defined system prompt as a tuple of string literals instead of a single string.
+
+**Result:** Passed tuple instead of string to `OllamaAgentHandler`, causing type errors.
+
+**Correct approach:** Use implicit string concatenation in parentheses to define multi-line strings:
+```python
+_system_prompt = (
+    "You are a healthcare professional. "
+    "Review the patient data and provide next steps. "
+    "Return JSON format as {\"summary\": \"...\", \"risk_tier\": \"high\"|\"medium\"|\"low\"|\"critical\"}"
+)
+```
+
+**Lesson:** Python implicit string concatenation is clean for multi-line literals. Document the format explicitly (e.g., "Pass as single string, not tuple") to prevent similar mistakes.
+
+---
+
+### 14. LLM Response Parsing with Fallback
+**Mistake:** Assumed LLM would always return valid JSON with required fields ("recommend", "risk").
+
+**Reality:** LLM returned plain natural language text without JSON structure when prompt was ambiguous.
+
+**Correct approach:** Wrap JSON parsing in try-except with fallback:
+```python
+try:
+    result_json = json.loads(result)
+    summary = result_json.get("recommend", result)  # fallback to whole result
+    risk_tier = result_json.get("risk", "medium")
+except (json.JSONDecodeError, ValueError):
+    # LLM returned plain text, not JSON
+    summary = result
+    risk_tier = "medium"  # sensible default
+```
+
+**Lesson:** Defensive parsing for LLM outputs. LLMs are non-deterministic; always have a fallback for unexpected formats. Document the expected format in the system prompt clearly.
+
+---
+
+### 15. Risk Tier Value Mismatch (System Prompt vs Database)
+**Mistake:** System prompt said `"risk": high/med/low` but database constraint expected `risk_tier IN ('low', 'medium', 'high', 'critical')`.
+
+**Error:** LLM returned "med" → database CHECK constraint violation.
+
+**Correct fix:** Make system prompt explicit about valid values:
+```python
+_system_prompt = (
+    "...risk_tier should be exactly one of: "
+    "\"high\"|\"medium\"|\"low\"|\"critical\""
+)
+```
+
+**Lesson:** Align system prompt examples with database schema. A difference of "med" vs "medium" is enough to break a constraint. Use exact value lists in prompts.
+
+---
+
+### 16. Response Models: Trim Unnecessary Fields
+**Mistake:** Included `canonical_patient_id` and `content_hash` in `RecommendationResponse` API model.
+
+**Why wrong:** Clients don't need these fields:
+- `canonical_patient_id` — Already known by client (used to fetch recommendation)
+- `content_hash` — Internal deduplication detail, not relevant to API consumers
+
+**Correct approach:** Return only fields clients care about: `id`, `summary`, `risk_tier`, `generated_at`.
+
+**Lesson:** API response models should represent the client's view, not the database schema. Don't leak internal details (hashing, deduplication logic) to the API layer.
+
+---
+
+### 17. Patient Timeline Endpoints: Distinguish Latest vs History
+**Mistake:** Assumed single `/timeline` endpoint would paginate all history per patient.
+
+**Reality:** Materialized view only stores latest per patient (O(1) lookup). Pagination on "latest 1 row per patient" is pointless.
+
+**Correct approach:** Two endpoints:
+- `GET /patient/{id}/timeline/latest` — Returns PatientTimeline (single row, O(1))
+- `GET /patient/{id}/timeline/history` — Returns paginated history (optional, for full timeline)
+
+**Lesson:** Understand your data model before designing API. Pagination doesn't make sense for queries that always return 1 row. Separate endpoints for different access patterns.
+
+---
+
 ## Takeaways for Future Decisions
 
 1. **Document scalability ceilings** — Know the bottlenecks (debounce lock is per-patient, acceptable)
@@ -129,3 +265,10 @@
 5. **Validate against standards** — Healthcare → event streams, compliance → audit trails required
 6. **Test horizontal scaling early** — Catch threading/sharding issues before they're baked in
 7. **Automate quality gates** — Use compilation/type-check hooks on every code edit to catch errors before they surface in testing
+8. **Identity tables must have single source of truth** — Never shard identity mappings; replicate instead. Sharding breaks the invariant.
+9. **Challenge scale assumptions** — Measure actual event distributions before declaring architectural bottlenecks. New patient registration may be <1% of traffic.
+10. **Match SDK methods to use cases** — `generate()` for completion, `chat()` for multi-turn + system prompts. Know your API contract.
+11. **Align prompts with schema** — System prompt examples must match database constraints exactly ("med" ≠ "medium"). Test the constraint boundary.
+12. **Defensive LLM parsing** — Always have fallbacks for unexpected response formats. LLMs are non-deterministic.
+13. **API models represent client view** — Don't leak internal details (hashes, deduplication) to API consumers. Return only what clients need.
+14. **Data model drives API design** — Pagination is pointless for queries returning 1 row. Separate endpoints for different access patterns.

@@ -153,6 +153,97 @@ Interactive terminal client for querying patient data and submitting synthetic e
 - **Container**: Docker Compose (dev) — one service per container with UVicorn
 - **Package Management**: uv + pyproject.toml (monorepo)
 
+## Horizontal Scaling Points
+
+The MVP architecture supports horizontal scaling at specific bottleneck points:
+
+### Primary Scaling Services (Independent)
+
+**Patient Reconciliation Worker** ⭐ (Highest Priority)
+- **Constraint**: Expensive reconciliation rules (merge, normalize, deduplicate)
+- **Scaling mechanism**: JetStream queue group (round-robin distribution)
+- **Metrics**: Queue depth (`reconciliation.tasks` backlog)
+- **Scale trigger**: > 100 pending tasks (process 50-100 tasks/min per instance)
+- **Max replicas**: 20 (diminishing returns beyond this; Postgres write contention on resolved_events becomes limiting)
+- **Bottleneck**: Postgres `resolved_events` write throughput; add write replicas or partition table by `canonical_patient_id` hash
+
+**Patient Event Reconciliation Service** ⭐
+- **Constraint**: Debounce coordination (row locks) + event log inserts
+- **Scaling mechanism**: JetStream queue group (round-robin distribution)
+- **Metrics**: Raw event ingestion rate (events/sec)
+- **Scale trigger**: > 1000 events/sec (debounce latency > 5s)
+- **Max replicas**: 5-10 (Postgres `event_logs` insert throughput becomes limiting)
+- **Bottleneck**: Postgres `event_logs` and `pending_publish_debouncer` write contention; partition event_logs by `canonical_patient_id` hash
+
+**Patient Summary Service** (Limited)
+- **Constraint**: LLM inference (CPU/memory-bound, not I/O)
+- **Scaling mechanism**: NATS topic subscription (each instance consumes independently)
+- **Metrics**: `timeline.updated` event rate, LLM inference latency
+- **Scale trigger**: > 10 LLM inferences/sec (watch for timeout rate)
+- **Max replicas**: 3-5 (LLM throughput is the limiting factor; use GPU instances or batch multiple patients)
+- **Bottleneck**: Ollama/LLM inference capacity; consider batching or increasing model concurrency
+
+### Secondary Scaling Services (Stateless HTTP)
+
+**Patient API** (Unlimited)
+- **No queue-based scaling needed** — stateless HTTP service
+- **Scaling mechanism**: Standard load balancer round-robin
+- **Metrics**: Request latency, downstream service latency (patient-timeline, patient-summary)
+- **Bottleneck**: Downstream service response time (not API itself)
+
+**Ingestion Gateway** (Unlimited)
+- **No queue-based scaling needed** — stateless HTTP service
+- **Scaling mechanism**: Standard load balancer round-robin
+- **Metrics**: Event ingestion rate (events/sec)
+- **Bottleneck**: NATS publish throughput (raw.source-* topics); not a bottleneck in MVP
+
+### Non-Scaling Services (Stateful)
+
+**Patient Data Service**
+- **Current state**: Single instance (identity resolution via atomic upsert)
+- **Scaling approach**: Single primary instance (source of truth), read replicas for SELECT queries
+- **Serialization bottleneck**: Minimal in practice
+  - Only hit on NEW patient registration (~0.5-1% of traffic for typical health systems; most events are for existing patients)
+  - Postgres row locks complete in sub-millisecond; not a real constraint
+  - Bulk imports (5,000 new patients) complete in ~100ms
+  - Per-source sharding breaks identity resolution (different shards would assign different canonical IDs to same patient)
+- **Actual throughput limits**: Postgres write throughput on `patients` table (~1000 inserts/sec typical)
+- **Scaling mitigation**: Read replicas for golden record queries (downstream services query replicas); writes stay on primary for consistency
+
+**Patient Timeline Service**
+- **Current state**: Single instance (materialized view refresh)
+- **Scaling challenge**: `REFRESH MATERIALIZED VIEW CONCURRENTLY` is a global operation, cannot be parallelized per-patient
+- **Future mitigation**: Incremental materialized views (pg_ivm) or per-patient separate views
+
+**Notification Service** (Not Implemented)
+- **Future state**: Single instance (subscriber to `risk.computed`)
+- **Scaling path**: Webhook delivery to external systems; can be scaled if webhook delivery is async
+
+### Bottleneck Analysis (MVP)
+
+1. **Database write throughput** (Postgres)
+   - `event_logs` inserts: ~1000 events/sec per instance (tuning: batch inserts, SSD, connection pooling)
+   - `pending_publish_debouncer` updates: serialized by Postgres row locks (fine-grained per patient, acceptable)
+   - `resolved_events` inserts: ~100 reconciliations/sec per instance
+   - **Mitigation**: Table partitioning by `canonical_patient_id` hash, write replicas for read-heavy queries
+
+2. **NATS JetStream throughput**
+   - `reconcile` stream: ~5000 messages/sec per NATS node (publish + subscribe)
+   - `reconciliation.tasks` stream: ~500 messages/sec per NATS node
+   - **Mitigation**: NATS cluster with 3+ nodes, JetStream replication factor=3
+
+3. **LLM inference capacity** (Ollama)
+   - Biomistral-7b: ~5-10 inferences/sec per GPU (depends on model quantization, prompt length)
+   - **Mitigation**: Increase model concurrency, use multi-GPU setup, batch multiple patients, or switch to faster model (e.g., Mistral-small)
+
+4. **Connection pooling** (Postgres)
+   - Total connections: ~5 services × 2 pools × 5 max per pool = ~50 connections
+   - Limit: ~150 connections total (Postgres default: 100 max_connections)
+   - **Headroom**: Scale up to ~15 services before hitting Postgres connection limit
+   - **Mitigation**: PgBouncer connection pooler, increase max_connections
+
+---
+
 ## Deployment and Scaling Strategy
 
 ### Development (Local)
