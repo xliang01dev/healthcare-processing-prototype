@@ -13,8 +13,8 @@ A microservices-based healthcare data processing system that ingests patient dat
 | **Patient Event Reconciliation** | Consume `reconcile` events (via queue group for horizontal scaling). Enforce idempotency via `event_logs`. Manage 5-second debounce window per patient (with Postgres row locks for sync). Enqueue reconciliation tasks to work queue when debounce expires. |
 | **Patient Reconciliation Worker** | Consume tasks from work queue (JetStream `reconciliation.tasks`). Apply reconciliation rules to merge events from multiple sources. Publish `reconciled.events` to timeline service. Stateless, scales horizontally. |
 | **Patient Timeline** | Consume `reconciled.events`. Refresh materialized view (latest per patient). Publish `timeline.updated` after refresh. |
-| **Patient Summary** | Consume `timeline.updated`. Fetch timeline + golden record. Run LLM risk assessment. Publish `risk.computed`. Nightly batch cron job. |
-| **Patient API** | Public API gateway. Delegates to downstream services. |
+| **Patient Summary** | Consume `timeline.updated`. Fetch timeline + golden record. Run LLM risk assessment via Ollama. Store recommendations with risk tier. Event-driven (timeline updates) or batch cron. |
+| **Patient API** | Public API gateway. Resolves medicare_id to canonical_patient_id. Delegates to downstream services for patient data, timelines, and recommendations. |
 | **NPI Registry** | Reference service for provider lookup. Query by NPI code → provider name, title, specialty. No message bus. |
 | **Notification** | Consume `risk.computed`. Route alerts for High/Critical risk patients. |
 
@@ -30,9 +30,9 @@ A microservices-based healthcare data processing system that ingests patient dat
 
 **Patient Timeline** — The materialized view layer. Consumes reconciled events and stores the latest state per patient. Maintains a single-row-per-patient materialized view for ultra-fast O(1) lookups. Critically, refreshes the view before publishing the `timeline.updated` event (refresh-then-publish rule) to guarantee consistency.
 
-**Patient Summary** — The AI layer. Triggered by timeline updates (event-driven) or runs nightly (batch). Fetches the patient's reconciled timeline and golden record, builds a prompt, and calls the LLM for risk assessment and recommended actions. Deduplicates results and publishes risk scores downstream.
+**Patient Summary** — The AI layer. Triggered by timeline updates (event-driven) or runs nightly (batch). Fetches the patient's reconciled timeline, formats it as natural language prose, and calls the Ollama LLM for risk assessment and recommended actions. Stores recommendations with risk tier (high/medium/low/critical) and content hash for deduplication. Accepts system prompt as configuration for flexible risk assessment logic.
 
-**Patient API** — The read entry point. Exposes HTTP GET endpoints for external clients to retrieve patient data. Delegates to Patient Data Service (for golden record), Patient Timeline (for longitudinal history), and Patient Event Reconciliation (for conflict records). Stateless orchestration layer.
+**Patient API** — The read entry point. Exposes HTTP GET endpoints for external clients to retrieve patient data. Resolves medicare_id to canonical_patient_id via the patient data service. Delegates to Patient Data Service (for golden record), Patient Timeline (for longitudinal history), and Patient Summary (for recommendations). Stateless orchestration layer.
 
 **NPI Registry** — A lightweight reference service for provider enrichment. Stores provider master data (names, credentials, specialties) indexed by National Provider Identifier (NPI code). No message bus coupling — purely synchronous lookup. Enables inline enrichment of provider references in reconciliation and risk assessment.
 
@@ -47,8 +47,7 @@ A microservices-based healthcare data processing system that ingests patient dat
 | `reconcile` | **JetStream Stream** | Patient Data | Patient Event Reconciliation (queue group) | Durable event stream; round-robin distribution via queue group |
 | `reconciliation.tasks` | **JetStream Stream** | Patient Event Reconciliation | Patient Reconciliation Worker (queue group) | Durable work queue; round-robin distribution for independent scaling |
 | `reconciled.events` | NATS Core | Patient Reconciliation Worker | Patient Timeline | Reconciled snapshot ready for timeline update |
-| `timeline.updated` | NATS Core | Patient Timeline | Patient Summary | Trigger risk assessment for this patient |
-| `risk.computed` | NATS Core | Patient Summary | Notification | Risk assessment result — route alerts |
+| `timeline.updated` | NATS Core | Patient Timeline | Patient Summary | Trigger LLM risk assessment for this patient |
 
 ## Data Flow
 
@@ -82,19 +81,18 @@ graph TD
     TL -->|publish timeline.updated| BUS
     
     BUS -->|timeline.updated| PS["Patient Summary Service"]
-    PS -->|GET /internal/patient/timeline| TL
-    PS -->|GET /internal/patient/golden-record| PD
-    PS -->|LLM risk assessment| PS
-    PS -->|publish risk.computed| BUS
-    
-    BUS -->|risk.computed| NS["Notification Service"]
-    NS -->|route alerts| NS
+    PS -->|GET /internal/patient/timeline/latest| TL
+    PS -->|GET /internal/patient/{canonical_id}/golden-record| PD
+    PS -->|LLM risk assessment via Ollama| PS
+    PS -->|store recommendation| PS
     
     API["Patient API"]
-    CLIENT -->|GET /patient/{id}| API
-    API -->|query| PD
-    API -->|query| RE
+    CLIENT -->|GET /patient/medicare/{id}| API
+    CLIENT -->|GET /patient/{canonical_id}/recommendation| API
+    API -->|resolve medicare_id| PD
+    API -->|GET /internal/patient/resolve| PD
     API -->|query| TL
+    API -->|query| PS
     
     NPI["NPI Registry"]
     PS -->|GET /v1/npi/{code}| NPI
@@ -103,64 +101,47 @@ graph TD
 
 ## Key Patterns
 
-### Identity Resolution (Race-Condition Safe)
-- **Problem**: Three sources publish simultaneously with different patient IDs. Whichever arrives first "wins".
-- **Solution**: Atomic `INSERT ... ON CONFLICT (shared_anchor) DO NOTHING` followed by `SELECT`.
-  - First event creates the canonical UUID
-  - Later events for same patient match to existing UUID
-  - Order doesn't matter — correctness is guaranteed
-- **Shared Anchor**: Registration ID agreed across all sources (equivalent to Medicare Beneficiary ID)
+**Identity Resolution** — Atomic upsert using shared anchor (Medicare ID) ensures correctness regardless of event order across sources. Single canonical patient UUID per person.
 
-### Debouncing (Reconciliation Service Owned, Scalable)
-- **Why**: Multiple events from same source batch should be reconciled together, not individually
-- **How**: 5-second debounce window per patient with hard deadline (30 minutes max)
-  - Reconciliation Service instances subscribe to `reconcile` JetStream stream with `service_name` (unique per instance) and `message_group="reconciliation-workers"` (queue group for round-robin distribution)
-  - Each instance inserts event log (append-only, idempotent via `message_id`)
-  - Uses `SELECT ... FOR UPDATE` on `pending_publish_debouncer` row within a `writer_transaction()` context to serialize concurrent updates for the same patient
-  - New event within window: extend timer, update `last_event_log_id` (under lock)
-  - Timer expires: close window, publish reconciliation task to `reconciliation.tasks` JetStream stream, set `published_at = NOW()`
-  - Exceeds ceiling: close old window, start new one
-- **Synchronization**: Postgres row locks (per-patient, fine-grained) managed via `writer_transaction()` context manager. Lock contention acceptable because debounce hold time is milliseconds (just state updates). Expensive reconciliation work happens in separate worker service, outside the lock.
-- **Source of Truth**: Append-only `event_logs` table + JetStream persistence for both `reconcile` and `reconciliation.tasks` streams
+**Debouncing** — 5-second debounce window per patient (30-minute ceiling) accumulates events before expensive reconciliation. Postgres row locks serialize concurrent updates. Decoupled from reconciliation worker.
 
-### Idempotency
-- Every inbound event gets `message_id = SHA256(source_id + version + source_system)`
-- Reconciliation Service checks `event_logs.message_id` before processing
-- Prevents re-processing of duplicates or retried events
+**Idempotency** — Each event gets stable `message_id = SHA256(source_id + version + source_system)`. Prevents re-processing duplicates.
 
-### Materialized View (Timeline)
-- Stores **only latest per patient** using `DISTINCT ON (canonical_patient_id)`
-- Enables O(1) lookup: `SELECT * FROM patient_timeline WHERE canonical_patient_id = $1`
-- Refreshed concurrently after each reconciliation
-- **Critical**: Refresh must complete **before** publishing `timeline.updated` (refresh-then-publish rule)
+**Materialized View (Timeline)** — Latest-per-patient snapshot enables O(1) lookups. Refreshed after each reconciliation. Critical: refresh before publishing `timeline.updated` event.
 
-### LLM Risk Assessment (Post-Reconciliation)
-- Triggered by `timeline.updated` (event-driven) or nightly cron (batch)
-- Always operates on latest, cleanest reconciled state
-- No separate rule engine — LLM generates risk tier + recommendations
-- Results deduped: hash → structural diff → cosine similarity
+**LLM Risk Assessment** — Event-driven (triggered by timeline updates) or batch cron. Operates on clean reconciled state. System prompt configurable for flexible risk logic.
 
-### Connection Pooling
-- Each service manages its own asyncpg pool: `min_size=2, max_size=5`
-- Total: ~5 services × 2 pools × 5 max = ~50 connections (under 150 limit)
-- Pool sizes configurable via env vars `POSTGRES_POOL_MIN_SIZE` / `POSTGRES_POOL_MAX_SIZE`
+**Horizontal Scaling** — Patient Reconciliation Worker instances are stateless, scale independently via JetStream queue groups. Patient Event Reconciliation scales via same mechanism.
 
-### Stateless Workers with Horizontal Scaling
-- **Patient Reconciliation Worker** instances (not threads) consume tasks from `reconciliation.tasks` JetStream stream with queue group (round-robin distribution)
-- Each instance is stateless and independently scalable
-- Auto-scaling based on queue depth:
-  - **Development**: Single worker instance (Docker Compose)
-  - **Production (Kubernetes)**: KEDA auto-scaler (min=2, max=20 replicas based on `reconciliation.tasks` stream depth)
-  - **Production (AWS ECS)**: Auto Scaling Group (min=2, max=20 tasks based on SQS equivalent)
-- **Fault tolerance**: Instance crash → task returned to queue (JetStream re-delivers), picked up by another instance
-- **Independent deployment**: Worker code updates without restarting Patient Event Reconciliation service
-- **Database access**: Read-only to `event_logs`, write to `reconciled_events`
-- **Message acknowledgment**: Explicit `msg.ack()` on success, `msg.nak()` on failure enables re-delivery on crash
+**Fault Tolerance** — JetStream persistence + explicit acknowledgment (ack/nak) ensures re-delivery on failure.
 
-### Module-Level Instantiation
-- Services and data providers created at **module import time** (not in lifespan)
-- Lifespan only handles `connect()` / `disconnect()` for resources
-- Teardown order critical: `drain → remove_singleton → disconnect`
+## Patient API Endpoints
+
+### Public API (Read-Only)
+- `GET /patient/medicare/{medicare_id}` — Fetch patient info (demographics, enrollment, coverage)
+- `GET /patient/{canonical_patient_id}/timelines` — Fetch paginated patient timeline history
+- `GET /patient/{canonical_patient_id}/recommendation` — Fetch latest recommendation (summary, risk tier, timestamp)
+- `GET /patient/{canonical_patient_id}/recommendations` — Fetch paginated recommendations history
+
+### Internal Endpoints
+- `GET /patient/internal/resolve?medicare_id={id}` — Resolve medicare_id to canonical_patient_id (for client-side resolution)
+
+## Client (Interactive CLI)
+
+Interactive terminal client for querying patient data and submitting synthetic events.
+
+### Hotkeys
+- `[pi]` — Fetch patient info by medicare_id → displays demographics, enrollment, coverage
+- `[pr]` — Fetch patient recommendation by medicare_id → displays latest recommendation with risk tier
+- `[p]` — Pick a different patient from the factory
+- `[m/b/l/h]` — Submit Medicare / Hospital / Labs / Hydrate events
+- `[r]` — Submit random event
+- `[q]` — Quit
+
+### Features
+- Factory of predefined test patients with known identities
+- Event generation (Medicare enrollment, Hospital encounters, Lab results)
+- Real-time display of API responses in JSON format
 
 ## Technology Stack
 
@@ -168,6 +149,7 @@ graph TD
 - **Database**: PostgreSQL 16 with per-service schemas and asyncpg connection pooling
 - **ORM**: asyncpg (async Python driver, no ORM) with raw SQL
 - **Framework**: FastAPI + async/await throughout
+- **LLM Backend**: Ollama (local or remote) with configurable models
 - **Container**: Docker Compose (dev) — one service per container with UVicorn
 - **Package Management**: uv + pyproject.toml (monorepo)
 
@@ -247,5 +229,6 @@ Source Event → Ingestion → Event Log → Debounce → Reconcile → Resolved
 | **Debounce Synchronization** | Postgres `SELECT ... FOR UPDATE` in transaction | Serializes concurrent updates for same patient via `writer_transaction()` context manager. Lock hold time is milliseconds (just state updates). Expensive work happens in separate worker. |
 | **Patient Timeline View** | Refresh entire view after each reconciliation | Acceptable for MVP; could optimize per-patient refresh in production with separate transaction/notification |
 | **Data Standards** | Plain JSON, no shared schema registry | Flexibility for each service; coupling risk if contracts drift. Mitigated by interface versioning in schema. |
-| **LLM Backend** | Mocked dictionary for POC | Fast iteration; swap in Anthropic API / Ollama / LangGraph later |
+| **LLM Backend** | Ollama with configurable models (e.g., adrienbrault/biomistral-7b) | Flexible, runs locally (no cloud API). Swap in Anthropic API / LLaMA / LangGraph later. System prompt configurable. |
+| **Patient Data Formatting for LLM** | Natural language prose (PatientTimeline.to_agent_prompt()) | More readable for LLM than piped/structured format. Easier prompt engineering. |
 | **Single Postgres** | Per-service schemas, one DB instance | Sufficient for learning; production would use dedicated per-service DBs + read replicas |

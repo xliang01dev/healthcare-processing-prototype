@@ -25,16 +25,3 @@ class RecommendationResponse(BaseModel):
     summary: str | None = Field(None, description="Recommendation text")
     risk_tier: str | None = Field(None, description="Risk level: high, medium, low")
     generated_at: datetime | None = Field(None, description="When this recommendation was generated")
-
-
-class RecommendationsResponse(BaseModel):
-    stub: bool = True
-
-
-class ConflictsResponse(BaseModel):
-    stub: bool = True
-
-
-class RecommendationRequest(BaseModel):
-    opType: str = ""
-    patientId: str = ""
