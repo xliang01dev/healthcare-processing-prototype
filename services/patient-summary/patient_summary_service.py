@@ -48,16 +48,6 @@ class PatientSummaryService:
         response.raise_for_status()
         return response.json()
 
-    async def _assess_patient(self, canonical_patient_id: str) -> None:
-        logger.info("_assess_patient: canonical_patient_id=%s", canonical_patient_id)
-        # TODO: Call self._fetch_patient_timeline(canonical_patient_id).
-        # TODO: Call self._fetch_golden_record(canonical_patient_id).
-        # TODO: Build versioned prompt from timeline events + golden record demographics.
-        # TODO: Await AgenticHandler.complete(prompt, context) — block until LLM result is returned.
-        # TODO: Deduplication check on result: hash check → structural diff → cosine similarity tiebreaker.
-        # TODO: Call data_provider.insert_recommendation() to persist result to patient_summary.recommendations.
-        # TODO: Publish risk computed event to the message bus.
-
     async def fetch_latest_recommendation(self, canonical_patient_id: str) -> dict | None:
         logger.info("fetch_latest_recommendation: canonical_patient_id=%s", canonical_patient_id)
         return await self.data_provider.fetch_latest_recommendation(canonical_patient_id)
@@ -65,12 +55,6 @@ class PatientSummaryService:
     async def fetch_recommendations(self, canonical_patient_id: str, page: int, page_size: int) -> list:
         logger.info("fetch_recommendations: canonical_patient_id=%s page=%s page_size=%s", canonical_patient_id, page, page_size)
         return await self.data_provider.fetch_recommendations(canonical_patient_id, page, page_size)
-
-    async def run_batch_for_patient(self, canonical_patient_id: str) -> dict:
-        logger.info("run_batch_for_patient: canonical_patient_id=%s", canonical_patient_id)
-        # TODO: HTTP-triggered single-patient assessment — calls _assess_patient() immediately.
-        await self._assess_patient(canonical_patient_id)
-        return {"queued": True, "canonical_patient_id": canonical_patient_id}
 
     async def handle_timeline_updated(self, msg) -> None:
         reconciled_event_json = json.loads(msg.data.decode())
@@ -106,11 +90,3 @@ class PatientSummaryService:
         )
 
         await self.data_provider.insert_recommendation(recommendation=recommendation)
-
-
-    async def run_batch(self) -> None:
-        logger.info("run_batch")
-        # TODO: Cron entry point — batch trigger for patients whose timelines have not yet been assessed.
-        # TODO: Determine candidate canonical_patient_ids (e.g. patients with no recent recommendation).
-        # TODO: For each candidate: call self._assess_patient(canonical_patient_id).
-        # TODO: On failure, enqueue to dead-letter queue (DLQ consumer not implemented in POC).

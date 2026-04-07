@@ -147,6 +147,30 @@ Can be added once risk scores are validated by operators.
 
 ---
 
+## NPI Registry Service
+
+**Status**: Service skeleton exists, not integrated
+
+**Purpose**: Validate and enrich National Provider Identifier (NPI) data from incoming events. Provides NPI lookups for care team providers.
+
+**Current Code**:
+- `services/npi-registry/` — Standalone FastAPI service with database schema
+- `npi_router.py` — HTTP endpoints for NPI lookup
+- `npi_service.py` — Service logic (unimplemented)
+- `npi_models.py` — NPI data models
+- Database table: `npi_registry.providers`
+
+**Rationale for Deferral**: MVP doesn't require provider enrichment. Events include `primary_care_provider_npi` and `attending_physician_npi` but don't validate or resolve them. This service would be used by reconciliation rules to flag invalid NPIs or enrich provider names/specialties.
+
+**Implementation Plan**:
+1. Populate `npi_registry.providers` table from CMS NPI database
+2. Implement `NpiService.lookup_provider(npi: str)` to validate and cache NPI data
+3. Call from `PatientEventReconciliationRules` to validate care team NPIs
+4. Expose HTTP endpoint: `GET /internal/provider/{npi}` for provider lookup
+5. Enrich reconciled events with provider names and specialties
+
+---
+
 # Production-Grade Requirements
 
 The following rules, services, and features are essential for a production healthcare system but deferred from the MVP.

@@ -139,26 +139,6 @@ class PatientEventReconciliationDataProvider(DataProvider):
         """
         await self.execute(sql, published_at, canonical_patient_id)
 
-    async def insert_resolved_event(self, event: dict) -> None:
-        logger.info("insert_resolved_event: canonical_patient_id=%s", event.get("canonical_patient_id"))
-        # TODO: INSERT INTO patient_event_reconciliation.resolved_events
-        #   (canonical_patient_id, source_system_ids, from_event_log_id, to_event_log_id, payload, resolution_log, source_system_event_at)
-        #   VALUES ($1, $2, $3, $4, $5, $6, $7);
-
-    async def fetch_conflicts(self, canonical_patient_id: str, page: int, page_size: int) -> list:
-        logger.info("fetch_conflicts: canonical_patient_id=%s page=%s page_size=%s", canonical_patient_id, page, page_size)
-        # TODO: SELECT * FROM patient_event_reconciliation.reconciliation_conflicts
-        #   WHERE canonical_patient_id = $1
-        #   ORDER BY created_at DESC
-        #   LIMIT $2 OFFSET $3;
-        return []
-
-    async def insert_conflict(self, conflict: dict) -> None:
-        logger.info("insert_conflict: canonical_patient_id=%s conflict_type=%s", conflict.get("canonical_patient_id"), conflict.get("conflict_type"))
-        # TODO: INSERT INTO patient_event_reconciliation.reconciliation_conflicts
-        #   (canonical_patient_id, source_system_ids, conflict_type, detail)
-        #   VALUES ($1, $2, $3, $4);
-
     async def fetch_pending_publish_with_lock(self, canonical_patient_id: str, conn) -> PendingPublish | None:
         """Fetch pending publish row with SELECT FOR UPDATE lock.
 

@@ -59,20 +59,6 @@ class PatientCoordinatorService:
             logger.error("Failed to resolve medicare_id: %s", e)
             return None
 
-    async def resolve_canonical_to_medicare_id(self, canonical_patient_id: str) -> str | None:
-        """Resolve medicare_id to canonical_patient_id via patient_data service."""
-        logger.info("resolve_canonical_to_medicare_id: medicare_id=%s", canonical_patient_id)
-        try:
-            url = f"{self.patient_data_url}/internal/patient/resolve"
-            params = {"canonical_patient_id": canonical_patient_id}
-            response = await self.http_client.get(url, params=params)
-            response.raise_for_status()
-            data = response.json()
-            return data.get("medicare_id")
-        except httpx.HTTPError as e:
-            logger.error("Failed to resolve medicare_id: %s", e)
-            return None
-
     async def get_patient_timeline_latest(
         self, canonical_patient_id: str
     ) -> TimelineResponse:
@@ -111,7 +97,7 @@ class PatientCoordinatorService:
             return TimelineEventsResponse()
         except httpx.HTTPError as e:
             logger.error("Failed to fetch timelines: %s", e)
-            return TimelineHistoryResponse()
+            return TimelineEventsResponse()
 
     async def get_patient_recommendation(
         self, canonical_patient_id: str
