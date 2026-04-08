@@ -61,8 +61,8 @@ services:
     environment:
       NATS_URL: nats://nats:4222
     ports:
-      - "8001:8001"
-      - "5679:5678"  # debugpy
+      - "8010:8001"
+      - "8011:5678"  # debugpy
     depends_on:
       nats:
         condition: service_healthy
@@ -87,8 +87,8 @@ services:
       POSTGRES_POOL_MIN_SIZE: 2
       POSTGRES_POOL_MAX_SIZE: 5
     ports:
-      - "8002:8002"
-      - "5680:5678"  # debugpy
+      - "8020:8002"
+      - "8021:5678"  # debugpy
     depends_on:
       postgres:
         condition: service_healthy
@@ -117,8 +117,8 @@ services:
       POSTGRES_POOL_MIN_SIZE: 2
       POSTGRES_POOL_MAX_SIZE: 5
     ports:
-      - "8003:8003"
-      - "5681:5678"  # debugpy
+      - "8030:8003"
+      - "8031:5678"  # debugpy
     depends_on:
       postgres:
         condition: service_healthy
@@ -145,8 +145,8 @@ services:
       POSTGRES_POOL_MIN_SIZE: 2
       POSTGRES_POOL_MAX_SIZE: 5
     ports:
-      - "8004:8004"
-      - "5682:5678"  # debugpy
+      - "8040:8004"
+      - "8041:5678"  # debugpy
     depends_on:
       postgres:
         condition: service_healthy
@@ -178,8 +178,8 @@ services:
       AGENT_URL: "http://host.docker.internal:11434"
       LLM_MODEL: "mistral:latest"
     ports:
-      - "8005:8005"
-      - "5683:5678"  # debugpy
+      - "8050:8005"
+      - "8051:5678"  # debugpy
     depends_on:
       postgres:
         condition: service_healthy
@@ -205,7 +205,7 @@ services:
       PATIENT_SUMMARY_URL: http://patient-summary:8005
     ports:
       - "8000:8000"
-      - "5678:5678"  # debugpy
+      - "8001:5678"  # debugpy
     depends_on:
       - patient-data
       - patient-event-reconciliation
@@ -223,8 +223,8 @@ services:
     environment:
       NATS_URL: nats://nats:4222
     ports:
-      - "8006:8006"
-      - "5684:5678"  # debugpy
+      - "8060:8006"
+      - "8061:5678"  # debugpy
     depends_on:
       nats:
         condition: service_healthy
@@ -251,8 +251,8 @@ services:
       POSTGRES_POOL_MIN_SIZE: 2
       POSTGRES_POOL_MAX_SIZE: 5
     ports:
-      - "8008:8008"
-      - "5686:5678"  # debugpy
+      - "8070:8008"
+      - "8071:5678"  # debugpy
     depends_on:
       postgres:
         condition: service_healthy
@@ -281,8 +281,8 @@ services:
       POSTGRES_POOL_MAX_SIZE: 5
       LOG_CONFIG: shared/custom-logging.yaml
     ports:
-      - "8007:8007"
-      - "5685:5678"  # debugpy
+      - "8080:8007"
+      - "8081:5678"  # debugpy
     depends_on:
       postgres:
         condition: service_healthy
@@ -294,8 +294,72 @@ services:
       timeout: 5s
       retries: 3
 
+  # ---------------------------------------------------------------------------
+  # Observability
+  # ---------------------------------------------------------------------------
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "3020:3020"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.listen-address=:3020"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3020/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - healthcare-service-network
+
+  loki:
+    image: grafana/loki:latest
+    volumes:
+      - ./infra/loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    ports:
+      - "3010:3010"
+    command: -config.file=/etc/loki/local-config.yaml
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3010/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - healthcare-service-network
+
+  grafana:
+    image: grafana/grafana:latest
+    volumes:
+      - ./infra/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - grafana_data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+      - loki
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - healthcare-service-network
+
 volumes:
   healthcare_postgres_data:
+  prometheus_data:
+  loki_data:
+  grafana_data:
 
 networks:
   healthcare-service-network:
