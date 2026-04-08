@@ -6,7 +6,7 @@ Submits synthetic patient events to the Ingestion Gateway.
 
 Usage:
     python client/main.py                                   # defaults
-    python client/main.py http://localhost:8001 http://localhost:8002  # custom urls
+    python client/main.py http://localhost:8010 http://localhost:8000  # custom urls
 
 Dependencies (install via project venv):
     httpx>=0.24    pydantic>=2.6
@@ -29,7 +29,7 @@ from factory import PATIENTS, build, build_random
 # Config
 # ---------------------------------------------------------------------------
 
-DEFAULT_GATEWAY_URL = "http://localhost:8001"
+DEFAULT_GATEWAY_URL = "http://localhost:8010"
 DEFAULT_PATIENT_API_URL = "http://localhost:8000"
 
 _DIVIDER = "─" * 52

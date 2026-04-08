@@ -9,6 +9,8 @@ import httpx
 from fastapi import FastAPI
 
 from shared.singleton_store import register_singleton, remove_singleton
+from shared.metrics_router import create_metrics_router
+from shared.metrics_middleware import MetricsMiddleware
 from patient_coordinator_service import PatientCoordinatorService
 from internal_router import router
 
@@ -40,7 +42,9 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(MetricsMiddleware)
 app.include_router(router)
+app.include_router(create_metrics_router())
 
 
 @app.get("/health")

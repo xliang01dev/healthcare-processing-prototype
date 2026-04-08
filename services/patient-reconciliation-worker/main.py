@@ -14,6 +14,8 @@ if os.getenv("INCLUDE_DEBUG", "false").lower() == "debugpy":
 
 from shared.message_bus import MessageBus
 from shared.singleton_store import get_singleton, register_singleton, remove_singleton
+from shared.metrics_router import create_metrics_router
+from shared.metrics_middleware import MetricsMiddleware
 from reconciliation_event_worker_service import ReconciliationEventWorkerService
 from reconciliation_event_worker_data_provider import ReconciliationEventWorkerDataProvider
 from patient_event_reconciliation_rules import PatientEventReconciliationRules
@@ -59,6 +61,8 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(MetricsMiddleware)
+app.include_router(create_metrics_router())
 
 
 @app.get("/health")

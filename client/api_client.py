@@ -13,8 +13,8 @@ import httpx
 
 class APIClient:
     def __init__(self, patient_api_url: str, gateway_url: str) -> None:
-        # patient_api_url should be like "http://localhost:8002"
-        # gateway_url should be like "http://localhost:8001"
+        # patient_api_url should be like "http://localhost:8000"
+        # gateway_url should be like "http://localhost:8010"
         self._patient_api_url = patient_api_url.rstrip('/')
         self._gateway_url = gateway_url.rstrip('/')
         self._client: httpx.AsyncClient | None = None

@@ -8,6 +8,8 @@ import yaml
 from fastapi import FastAPI
 
 from shared.singleton_store import get_singleton, register_singleton, remove_singleton
+from shared.metrics_router import create_metrics_router
+from shared.metrics_middleware import MetricsMiddleware
 from npi_service import NPIRegistryService
 from npi_data_provider import NPIDataProvider
 import npi_router
@@ -40,7 +42,9 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(MetricsMiddleware)
 app.include_router(npi_router.router)
+app.include_router(create_metrics_router())
 
 
 @app.get("/health")
