@@ -3,6 +3,7 @@ import faulthandler
 import logging
 import logging.config
 import os
+import time
 import yaml
 
 from fastapi import FastAPI
@@ -16,6 +17,7 @@ from shared.message_bus import MessageBus
 from shared.singleton_store import get_singleton, register_singleton, remove_singleton
 from shared.metrics_router import create_metrics_router
 from shared.metrics_middleware import MetricsMiddleware
+from reconciliation_event_worker_metrics import reconciliation_duration, reconciliation_total, reconciliation_in_flight
 from reconciliation_event_worker_service import ReconciliationEventWorkerService
 from reconciliation_event_worker_data_provider import ReconciliationEventWorkerDataProvider
 from patient_event_reconciliation_rules import PatientEventReconciliationRules
@@ -42,7 +44,22 @@ register_singleton(ReconciliationEventWorkerService, ReconciliationEventWorkerSe
 
 
 async def _handle_reconciliation_task(msg):
-    await get_singleton(ReconciliationEventWorkerService).handle_reconciliation_task(msg)
+    """Handle reconciliation task with metrics recording."""
+    reconciliation_in_flight.inc()
+    start_time = time.time()
+    try:
+        await get_singleton(ReconciliationEventWorkerService).handle_reconciliation_task(msg)
+        duration = time.time() - start_time
+        reconciliation_duration.labels(status="success").observe(duration)
+        reconciliation_total.labels(status="success").inc()
+    except Exception as e:
+        duration = time.time() - start_time
+        reconciliation_duration.labels(status="failure").observe(duration)
+        reconciliation_total.labels(status="failure").inc()
+        logger.error(f"Reconciliation task failed: {e}", exc_info=True)
+        raise
+    finally:
+        reconciliation_in_flight.dec()
 
 
 @asynccontextmanager
