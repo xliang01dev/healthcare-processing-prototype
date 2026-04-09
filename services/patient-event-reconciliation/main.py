@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 import faulthandler
 import logging
 import logging.config
+import json
 import os
 import yaml
 
@@ -16,6 +17,8 @@ from shared.message_bus import MessageBus
 from shared.singleton_store import get_singleton, register_singleton, remove_singleton
 from shared.metrics_router import create_metrics_router
 from shared.metrics_middleware import MetricsMiddleware
+from shared.opentelemetry_config import init_tracing, get_tracer
+from shared.trace_helpers import extract_trace_context
 from patient_event_reconciliation_service import PatientEventReconciliationService
 from patient_event_reconciliation_data_provider import PatientEventReconciliationDataProvider
 import internal_router as internal
@@ -26,6 +29,10 @@ _logging_config_file = os.getenv("LOG_CONFIG", "shared/custom-logging.yaml")
 with open(_logging_config_file) as f:
     logging.config.dictConfig(yaml.safe_load(f))
 logger = logging.getLogger(__name__)
+
+# Initialize OpenTelemetry tracing
+init_tracing("patient-event-reconciliation")
+tracer = get_tracer(__name__)
 
 _host, _port, _db = os.getenv("POSTGRES_HOST"), os.getenv("POSTGRES_PORT", "5432"), os.getenv("POSTGRES_DB")
 _worker_id = os.getenv("WORKER_ID", "reconciliation-service-default")
@@ -41,7 +48,19 @@ register_singleton(PatientEventReconciliationService, PatientEventReconciliation
 
 
 async def _handle_reconcile_event(msg):
-    await get_singleton(PatientEventReconciliationService).handle_reconcile_event(msg)
+    """Handle reconcile event with trace context propagation."""
+    payload = json.loads(msg.data.decode())
+    ctx = extract_trace_context(payload)
+
+    try:
+        with tracer.start_as_current_span("handle_reconcile_event", context=ctx) as span:
+            span.set_attribute("patient_id", payload.get("canonical_patient_id"))
+            await get_singleton(PatientEventReconciliationService).handle_reconcile_event(payload)
+        await msg.ack()
+    except Exception as e:
+        logger.error(f"Reconcile event failed: {e}", exc_info=True)
+        await msg.nak()  # Requeue message for retry (JetStream)
+        raise
 
 
 @asynccontextmanager

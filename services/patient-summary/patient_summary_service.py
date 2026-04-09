@@ -56,12 +56,11 @@ class PatientSummaryService:
         logger.info("fetch_recommendations: canonical_patient_id=%s page=%s page_size=%s", canonical_patient_id, page, page_size)
         return await self.data_provider.fetch_recommendations(canonical_patient_id, page, page_size)
 
-    async def handle_timeline_updated(self, msg) -> None:
-        reconciled_event_json = json.loads(msg.data.decode())
-        reconciled_event = ReconciledEvent.model_validate_json(reconciled_event_json)
+    async def handle_timeline_updated(self, payload: dict) -> None:
+        reconciled_event = ReconciledEvent.model_validate(payload)
 
         canonical_patient_id = reconciled_event.canonical_patient_id
-        logger.info("handle_timeline_updated: data=%s, patient=%s", reconciled_event_json, canonical_patient_id)
+        logger.info("handle_timeline_updated: data=%s, patient=%s", payload, canonical_patient_id)
         
         # Fetch the patient timeline first
         patient_timeline = await self._fetch_patient_timeline_latest(canonical_patient_id)

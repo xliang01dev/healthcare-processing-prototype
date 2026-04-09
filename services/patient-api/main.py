@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from shared.singleton_store import register_singleton, remove_singleton
 from shared.metrics_router import create_metrics_router
 from shared.metrics_middleware import MetricsMiddleware
+from shared.opentelemetry_config import init_tracing, get_tracer
 from patient_coordinator_service import PatientCoordinatorService
 from internal_router import router
 
@@ -20,6 +21,10 @@ _logging_config_file = os.getenv("LOG_CONFIG", "shared/custom-logging.yaml")
 with open(_logging_config_file) as f:
     logging.config.dictConfig(yaml.safe_load(f))
 logger = logging.getLogger(__name__)
+
+# Initialize OpenTelemetry tracing
+init_tracing("patient-api")
+tracer = get_tracer(__name__)
 
 http_client = httpx.AsyncClient()
 register_singleton(PatientCoordinatorService, PatientCoordinatorService(

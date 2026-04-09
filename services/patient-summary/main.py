@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 import faulthandler
 import logging
 import logging.config
+import json
 import os
 import yaml
 
@@ -17,6 +18,8 @@ from shared.message_bus import MessageBus
 from shared.singleton_store import get_singleton, register_singleton, remove_singleton
 from shared.metrics_router import create_metrics_router
 from shared.metrics_middleware import MetricsMiddleware
+from shared.opentelemetry_config import init_tracing, get_tracer
+from shared.trace_helpers import extract_trace_context
 from patient_summary_service import PatientSummaryService
 from patient_summary_data_provider import PatientSummaryDataProvider
 from agentic_handler import OllamaAgentHandler
@@ -28,6 +31,10 @@ _logging_config_file = os.getenv("LOG_CONFIG", "shared/custom-logging.yaml")
 with open(_logging_config_file) as f:
     logging.config.dictConfig(yaml.safe_load(f))
 logger = logging.getLogger(__name__)
+
+# Initialize OpenTelemetry tracing
+init_tracing("patient-summary")
+tracer = get_tracer(__name__)
 
 _host, _port, _db = os.getenv("POSTGRES_HOST"), os.getenv("POSTGRES_PORT", "5432"), os.getenv("POSTGRES_DB")
 data_provider = PatientSummaryDataProvider(
@@ -61,7 +68,13 @@ register_singleton(PatientSummaryService, PatientSummaryService(
 
 
 async def _handle_timeline_updated(msg):
-    await get_singleton(PatientSummaryService).handle_timeline_updated(msg)
+    """Handle timeline updated event with trace context propagation."""
+    payload = json.loads(msg.data.decode())
+    ctx = extract_trace_context(payload)
+
+    with tracer.start_as_current_span("handle_timeline_updated", context=ctx) as span:
+        span.set_attribute("patient_id", payload.get("canonical_patient_id"))
+        await get_singleton(PatientSummaryService).handle_timeline_updated(payload)
 
 
 @asynccontextmanager

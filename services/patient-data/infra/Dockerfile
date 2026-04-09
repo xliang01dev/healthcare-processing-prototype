@@ -23,7 +23,7 @@ RUN if [ "$INCLUDE_DEBUG" = "debugpy" ]; then \
     uv sync --frozen --no-install-project --group debug; \
 fi
 
-ARG APP_PORT=8002
+ARG APP_PORT=8020
 ENV APP_PORT=$APP_PORT
 EXPOSE $APP_PORT
 

@@ -17,6 +17,8 @@ from shared.message_bus import MessageBus
 from shared.singleton_store import get_singleton, register_singleton, remove_singleton
 from shared.metrics_router import create_metrics_router
 from shared.metrics_middleware import MetricsMiddleware
+from shared.opentelemetry_config import init_tracing, get_tracer
+from shared.trace_helpers import extract_trace_context
 from reconciliation_event_worker_metrics import reconciliation_duration, reconciliation_total, reconciliation_in_flight
 from reconciliation_event_worker_service import ReconciliationEventWorkerService
 from reconciliation_event_worker_data_provider import ReconciliationEventWorkerDataProvider
@@ -28,6 +30,10 @@ _logging_config_file = os.getenv("LOG_CONFIG", "shared/custom-logging.yaml")
 with open(_logging_config_file) as f:
     logging.config.dictConfig(yaml.safe_load(f))
 logger = logging.getLogger(__name__)
+
+# Initialize OpenTelemetry tracing
+init_tracing("patient-reconciliation-worker")
+tracer = get_tracer(__name__)
 
 _host, _port, _db = os.getenv("POSTGRES_HOST"), os.getenv("POSTGRES_PORT", "5432"), os.getenv("POSTGRES_DB")
 _worker_id = os.getenv("WORKER_ID", "reconciliation-event-worker-default")
@@ -44,19 +50,27 @@ register_singleton(ReconciliationEventWorkerService, ReconciliationEventWorkerSe
 
 
 async def _handle_reconciliation_task(msg):
-    """Handle reconciliation task with metrics recording."""
+    """Handle reconciliation task with trace context propagation and metrics recording."""
+    import json
     reconciliation_in_flight.inc()
     start_time = time.time()
+    payload = json.loads(msg.data.decode())
+    ctx = extract_trace_context(payload)
     try:
-        await get_singleton(ReconciliationEventWorkerService).handle_reconciliation_task(msg)
+        with tracer.start_as_current_span("handle_reconciliation_task", context=ctx) as span:
+            span.set_attribute("patient_id", payload.get("canonical_patient_id"))
+            await get_singleton(ReconciliationEventWorkerService).handle_reconciliation_task(payload)
+
         duration = time.time() - start_time
         reconciliation_duration.labels(status="success").observe(duration)
         reconciliation_total.labels(status="success").inc()
+        await msg.ack()
     except Exception as e:
         duration = time.time() - start_time
         reconciliation_duration.labels(status="failure").observe(duration)
         reconciliation_total.labels(status="failure").inc()
         logger.error(f"Reconciliation task failed: {e}", exc_info=True)
+        await msg.nak()  # Requeue message for retry (JetStream)
         raise
     finally:
         reconciliation_in_flight.dec()

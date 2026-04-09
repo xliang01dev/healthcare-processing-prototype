@@ -11,6 +11,7 @@ from shared.message_bus import MessageBus
 from shared.singleton_store import get_singleton, register_singleton, remove_singleton
 from shared.metrics_router import create_metrics_router
 from shared.metrics_middleware import MetricsMiddleware
+from shared.opentelemetry_config import init_tracing
 from ingest_service import IngestService
 import ingest_router as ingest
 
@@ -20,6 +21,9 @@ _logging_config_file = os.getenv("LOG_CONFIG", "shared/custom-logging.yaml")
 with open(_logging_config_file) as f:
     logging.config.dictConfig(yaml.safe_load(f))
 logger = logging.getLogger(__name__)
+
+# Initialize OpenTelemetry tracing
+init_tracing("ingestion-gateway")
 
 # logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s", force=True)
 # logger = logging.getLogger(__name__)

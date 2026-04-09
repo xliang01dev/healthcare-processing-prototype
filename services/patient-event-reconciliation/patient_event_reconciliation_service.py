@@ -22,21 +22,19 @@ class PatientEventReconciliationService:
         logger.info("fetch_conflicts: canonical_patient_id=%s page=%s page_size=%s", canonical_patient_id, page, page_size)
         return await self.data_provider.fetch_conflicts(canonical_patient_id, page, page_size)
 
-    async def handle_reconcile_event(self, msg) -> None:
+    async def handle_reconcile_event(self, payload: dict) -> None:
         try:
-            logger.info("handle_reconcile_event: subject=%s data=%s", msg.subject, msg.data)
-            json_data = json.loads(msg.data.decode())
-            message_id = json_data.get("message_id")
+            logger.info("handle_reconcile_event: data=%s", payload)
+            message_id = payload.get("message_id")
 
             # Check idempotency: if event_log already exists for this message_id, skip.
             if await self.data_provider.has_event_log(message_id):
                 logger.info("Message %s already processed, skipping", message_id)
-                await msg.ack()
                 return
 
-            canonical_patient_id = json_data.get("canonical_patient_id")
+            canonical_patient_id = payload.get("canonical_patient_id")
             # Insert event log before reconciliation
-            event_log_id = await self.data_provider.insert_event_log(json_data)
+            event_log_id = await self.data_provider.insert_event_log(payload)
             current_time = datetime.now(timezone.utc)
 
             # Manage debounce window with row locking to prevent race conditions
@@ -83,7 +81,6 @@ class PatientEventReconciliationService:
                         conn
                     )
 
-            await msg.ack()
         except Exception as e:
             logger.error("handle_reconcile_event failed: %s", e, exc_info=True)
-            await msg.nak()
+            raise

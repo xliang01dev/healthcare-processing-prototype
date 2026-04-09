@@ -256,6 +256,232 @@ _system_prompt = (
 
 ---
 
+## 2026-04-09
+
+### 18. OpenTelemetry & Jaeger Version Mismatch Cascades
+**Mistake:** Added OpenTelemetry instrumentation without checking version compatibility. Used `opentelemetry-exporter-jaeger` with modern instrumentation packages.
+
+**What went wrong:**
+- OpenTelemetry SDK v0.42b0 (instrumentation) incompatible with exporter-jaeger v1.21
+- Exporter tried to import constants (`OTEL_EXPORTER_JAEGER_AGENT_HOST`) that don't exist in that SDK version
+- Error: `ModuleNotFoundError: No module named 'deprecated'` (transitive dependency missing)
+- Then switched to OTLP exporter, which worked but required Jaeger v2
+
+**Lesson:** When adding observability frameworks, verify version alignment first:
+- OpenTelemetry SDK, exporters, and instrumentation must be compatible
+- Modern approach: Use OTLP (OpenTelemetry Protocol) with Jaeger v2 instead of Jaeger-specific exporters
+- Always lock transitive dependencies explicitly if they're critical (e.g., `deprecated` package)
+
+**Key takeaway:** OTLP is the modern standard. Old Jaeger-specific exporters and APIs are becoming deprecated. New projects should target OTLP + modern Jaeger v2.
+
+---
+
+### 19. Container Image Versions: `latest` ≠ Up-to-Date
+**Mistake:** Assumed `jaegertracing/all-in-one:latest` would pull Jaeger v2.
+
+**Reality:**
+- `jaegertracing/all-in-one` image is Jaeger v1 only (end-of-life Dec 2025)
+- Jaeger v2 is in `jaegertracing/jaeger` image (different image, not a tag)
+- Docker's `latest` tag can be stale if not pulled recently
+- Cached image stayed on disk even after updating compose file
+
+**Solution:**
+```bash
+docker-compose down
+docker image rm jaegertracing/all-in-one
+docker-compose pull jaeger  # explicit pull
+docker-compose up
+```
+
+**Lesson:** Always verify which image tag actually corresponds to which version. `latest` is not a guarantee of being current. For critical infrastructure (Jaeger, Prometheus, Loki), pin to explicit versions after testing. For observability, accept one minor version lag behind latest for stability.
+
+---
+
+### 20. Loki Configuration Complexity: v2 → v3 Schema Breaking Change
+**Mistake:** Started with Loki v2 config syntax, pulled Loki v3 container without updating config.
+
+**What broke:**
+- v3 removed fields: `enforce_metric_name`, `retention_deletes_enabled`, `shared_store` (boltdb-shipper)
+- v3 changed `schema_config.store` to only accept `tsdb` or `boltdb-shipper` (not `filesystem`)
+- v3 moved storage config structure: `tsdb_shipper` moved to `storage_config.tsdb_shipper`
+- Every config change spawned 3-4 validation errors at startup, hard to debug incrementally
+
+**Time spent:** ~45 minutes on syntax errors before finding working config.
+
+**Correct v3 config minimal structure:**
+```yaml
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      schema: v13
+
+storage_config:
+  filesystem:
+    directory: /loki/chunks
+
+limits_config:
+  retention_period: 24h
+  allow_structured_metadata: false
+
+server:
+  http_listen_port: 3010
+  log_level: error
+```
+
+**Lesson:** For each major version of infrastructure software, read the migration guide before upgrading. Loki v2→v3 is a breaking change. When pulling container updates, update config documentation at the same time. Version mismatches between containers and config cause cascading cryptic errors.
+
+---
+
+### 21. Jaeger v2 Configuration: No Flags, YAML Required
+**Mistake:** Tried to configure Jaeger v2 via environment variables and command-line flags like v1.
+
+**v1 approach (doesn't work on v2):**
+- `LOGLEVEL=error` environment variable — ignored in v2
+- `--log-level=error` command flag — unknown flag error
+- `--query.http.server.host-port=:3030` — v1 syntax, not recognized in v2
+
+**v2 approach:** Must use OpenTelemetry Collector YAML config syntax:
+```yaml
+service:
+  telemetry:
+    logs:
+      level: error
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+  jaeger:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:14250
+      thrift_http:
+        endpoint: 0.0.0.0:14268
+
+processors:
+  batch:
+    timeout: 10s
+    send_batch_size: 1024
+
+exporters:
+  debug:
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp, jaeger]
+      processors: [batch]
+      exporters: [debug]
+```
+
+**Lesson:** Jaeger v2 is a complete architectural rewrite on top of OpenTelemetry Collector. It's not "Jaeger with new flags" — it's a different system. When migrating from v1 to v2, expect to rewrite all configuration. Document this heavily: no backward compatibility on config syntax.
+
+---
+
+### 22. Logging Suppression: `logging: driver: "none"` vs Log Level Config
+**Mistake:** Initially tried to suppress Loki/Prometheus/Jaeger logs with `logging: driver: "none"` in docker-compose.
+
+**Why wrong:** Suppressing all logs means losing error information for debugging. Better to configure the service to only show errors.
+
+**Correct approach per service:**
+
+**Prometheus:**
+```yaml
+command:
+  - "--log.level=error"
+```
+
+**Loki:**
+```yaml
+server:
+  log_level: error
+```
+
+**Jaeger:**
+```yaml
+service:
+  telemetry:
+    logs:
+      level: error
+```
+
+**Lesson:** Each service has its own logging configuration API. Configure them individually rather than suppressing all logs. This preserves observability while reducing noise.
+
+---
+
+### 23. Premature Simplification: Removed Config Only to Re-Add It
+**Mistake:** When Jaeger config was complex (extensions validation errors), removed the config file entirely to "use defaults" and simplify troubleshooting.
+
+**What happened:**
+1. Removed `jaeger-config.yaml` volume mount and `--config` command flag
+2. Jaeger started successfully with defaults
+3. **But:** Default OTLP HTTP receiver listened on `127.0.0.1:4318` (localhost only), not `0.0.0.0:4318`
+4. Services inside Docker couldn't connect (Connection refused)
+5. Had to re-add the config file to explicitly bind to `0.0.0.0:4318`
+
+**Lesson:** Don't strip away configuration thinking "defaults will work." The defaults for Jaeger v2 bind to localhost for security (restricts exposure). You don't need *less* config; you need *working* config. 
+
+**Better approach:** Instead of removing config when stuck, analyze what's actually failing:
+- Config has syntax errors → Fix syntax incrementally (test each section)
+- Services can't reach it → Check network binding (localhost vs 0.0.0.0), not absence of config
+- Unknown field errors → Read docs for that version's field names
+
+**Time cost:** ~15 minutes of false troubleshooting (removed config, restarted, saw "working" but broken behavior, then had to re-add and fix properly).
+
+---
+
+## How to Avoid These Issues in the Future
+
+### Observability Stack (Issues 18-22)
+
+**Preventative measures that would have saved 2+ hours:**
+
+1. **Start with explicit version pinning (before first docker-compose up)**
+   - Don't use `latest` for any infrastructure service
+   - Pin: `jaegertracing/jaeger:2.0.0`, `grafana/loki:3.0.0`, `prom/prometheus:v2.45.0`
+   - Reason: Discover breaking changes during planning, not after container boots
+   - **Action:** Create a spreadsheet of service versions and their release dates before adding to compose
+
+2. **Read release notes for major versions before upgrading**
+   - Jaeger v1→v2: Major architectural change (required)
+   - Loki v2→v3: Breaking config syntax changes (required)
+   - Prometheus: Generally more stable, but still check if upgrading past v2
+   - **Action:** Spend 10 minutes reading "Breaking Changes" section on GitHub releases page
+
+3. **Test configuration locally first (docker-compose up on your laptop)**
+   - Push to remote only after confirming all services pass health checks
+   - Watch the logs for 30 seconds to spot initialization errors
+   - **Action:** Add pre-commit hook: `docker-compose config > /dev/null` to validate syntax
+
+4. **Verify OpenTelemetry compatibility matrix upfront**
+   - Don't mix arbitrary versions of SDK, exporter, instrumentation
+   - Check compatibility table: https://github.com/open-telemetry/opentelemetry-python/blob/main/CONTRIBUTING.md
+   - For modern stacks: Use OTLP from the start (not Jaeger-specific exporters)
+   - **Action:** Pin all OTel packages to same minor version (e.g., all `>=0.44b0, <0.45`)
+
+5. **Read the service's logging configuration API**
+   - Don't try `logging: driver: "none"` — it suppresses visibility, not noise
+   - Check service docs for log level config before first run
+   - **Action:** Add to docker-compose as comment: `# Logging: see https://docs.service.io/logging`
+
+6. **Create a "infrastructure versions.md" document**
+   - List each service, pinned version, and known config syntax
+   - Add "breaking changes from previous major" section
+   - Include minimal working config for each
+   - **Action:** Update this doc every time you upgrade a service version
+
+---
+
 ## Takeaways for Future Decisions
 
 1. **Document scalability ceilings** — Know the bottlenecks (debounce lock is per-patient, acceptable)
@@ -272,3 +498,10 @@ _system_prompt = (
 12. **Defensive LLM parsing** — Always have fallbacks for unexpected response formats. LLMs are non-deterministic.
 13. **API models represent client view** — Don't leak internal details (hashes, deduplication) to API consumers. Return only what clients need.
 14. **Data model drives API design** — Pagination is pointless for queries returning 1 row. Separate endpoints for different access patterns.
+15. **OTLP is the modern standard** — Use OTLP exporter + Jaeger v2, not Jaeger-specific exporters. Version mismatches cascade quickly.
+16. **Version mismatches are costly** — When adding observability, verify SDK/exporter/instrumentation compatibility upfront. Transitive dependencies matter.
+17. **Pin infrastructure versions** — Don't rely on `latest` tags for critical services. Verify which image/tag actually corresponds to which version. Cache invalidation is real.
+18. **Read migration guides for major versions** — v2→v3 breaking changes require config rewrites. Check docs before pulling new container versions.
+19. **Jaeger v1→v2 is architectural, not incremental** — v2 is OpenTelemetry Collector-based. No backward compat on config or CLI flags. Plan for complete rewrite.
+20. **Configure logging per-service** — Don't suppress all logs. Use service-specific log level config (Prometheus: `--log.level`, Loki: `server.log_level`, Jaeger: YAML) to reduce noise while preserving visibility.
+21. **Don't strip config to "simplify" troubleshooting** — Default configurations often have security constraints (localhost-only binding). When config is complex, fix it incrementally; don't remove it. Removing config to debug often hides the actual problem (network binding, not config syntax).

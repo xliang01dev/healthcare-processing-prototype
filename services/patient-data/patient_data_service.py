@@ -36,11 +36,10 @@ class PatientDataService:
             "Labs": self._handle_lab_event,
         }
 
-    async def handle_hydration_event(self, msg) -> None:
-        data = json.loads(msg.data.decode())
-        logger.info("handle_hydration_event: data=%s", data)
+    async def handle_hydration_event(self, payload: dict) -> None:
+        logger.info("handle_hydration_event: data=%s", payload)
 
-        hydrate_event = HydrateEvent.model_validate(data)
+        hydrate_event = HydrateEvent.model_validate(payload)
         patient_info = await self.data_provider.upsert_patient(hydrate_event.medicare_id)
         canonical_patient_id = patient_info.canonical_patient_id
 
@@ -57,21 +56,20 @@ class PatientDataService:
 
         await self.data_provider.upsert_golden_record(canonical_patient_id, golden_record)
 
-    async def handle_source_event(self, msg) -> None:
-        data = json.loads(msg.data.decode())
-        logger.info("handle_source_event: subject=%s data=%s", msg.subject, data)
- 
-        source_system_name = data.get("source_system")
+    async def handle_source_event(self, payload: dict) -> None:
+        logger.info("handle_source_event: data=%s", payload)
+
+        source_system_name = payload.get("source_system")
         handler = self.handlers.get(source_system_name)
-        result: EventResponse = await handler(data)
-        # Update data with ids for downstream processing and reconciliation
-        data["canonical_patient_id"] = str(result.canonical_patient_id)
-        data["source_system_id"] = result.source_system_id
+        result: EventResponse = await handler(payload)
+        # Update payload with ids for downstream processing and reconciliation
+        payload["canonical_patient_id"] = str(result.canonical_patient_id)
+        payload["source_system_id"] = result.source_system_id
 
         try:
             await self.bus.publish_stream(
                 topic="reconcile",
-                payload=data
+                payload=payload
             )
         except nats.errors.UnexpectedEOF:
             # Connection may have been closed, but publish was queued

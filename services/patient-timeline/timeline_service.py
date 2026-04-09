@@ -23,12 +23,11 @@ class TimelineService:
         logger.info("fetch_patient_timeline_history: canonical_patient_id=%s page=%s page_size=%s", canonical_patient_id, page, page_size)
         return await self.data_provider.fetch_patient_timeline_history(canonical_patient_id, page, page_size)
 
-    async def handle_reconciled_event(self, msg) -> None:
-        logger.info("handle_reconciled_event: data=%s", msg.data)
+    async def handle_reconciled_event(self, payload: dict) -> None:
+        logger.info("handle_reconciled_event: data=%s", payload)
 
-        # Parse reconciled event from message
-        event_data = json.loads(msg.data.decode())
-        reconciled_event = ReconciledEvent.model_validate(event_data)
+        # Parse reconciled event from payload
+        reconciled_event = ReconciledEvent.model_validate(payload)
 
         # Insert the reconciled event into the timeline
         await self.data_provider.insert_reconciled_event(reconciled_event)
@@ -39,7 +38,7 @@ class TimelineService:
         # Publish timeline.updated event
         await self.bus.publish(
             topic="timeline.updated",
-            payload=reconciled_event.model_dump_json()
+            payload=reconciled_event.model_dump(mode='json')
         )
 
         logger.info("handle_reconciled_event: published timeline.updated for canonical_patient_id=%s", reconciled_event.canonical_patient_id)

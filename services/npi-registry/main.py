@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from shared.singleton_store import get_singleton, register_singleton, remove_singleton
 from shared.metrics_router import create_metrics_router
 from shared.metrics_middleware import MetricsMiddleware
+from shared.opentelemetry_config import init_tracing, get_tracer
 from npi_service import NPIRegistryService
 from npi_data_provider import NPIDataProvider
 import npi_router
@@ -20,6 +21,10 @@ _logging_config_file = os.getenv("LOG_CONFIG", "shared/custom-logging.yaml")
 with open(_logging_config_file) as f:
     logging.config.dictConfig(yaml.safe_load(f))
 logger = logging.getLogger(__name__)
+
+# Initialize OpenTelemetry tracing
+init_tracing("npi-registry")
+tracer = get_tracer(__name__)
 
 _host, _port, _db = os.getenv("POSTGRES_HOST", ""), os.getenv("POSTGRES_PORT", "5432"), os.getenv("POSTGRES_DB", "")
 data_provider = NPIDataProvider(

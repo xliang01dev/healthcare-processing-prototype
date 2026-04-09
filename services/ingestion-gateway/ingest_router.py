@@ -4,8 +4,11 @@ from fastapi import APIRouter
 
 from ingest_service import IngestService
 from shared.singleton_store import get_singleton
+from shared.opentelemetry_config import get_tracer
+from shared.trace_helpers import inject_trace_context
 
 logger = logging.getLogger(__name__)
+tracer = get_tracer(__name__)
 
 router = APIRouter()
 
@@ -16,6 +19,7 @@ async def ingest_event(body: dict):
     Ingest a patient event from a source system.
 
     Body must include a 'source' field: one of 'medicare', 'hospital', 'labs'
+    Creates root span for trace correlation across services.
     """
     # Extract source from body
     source = body.get("source")
@@ -36,8 +40,17 @@ async def ingest_event(body: dict):
         }
 
     source_id = source_map[source]
-    logger.info("POST /ingest source=%s body=%s", source, body)
-    return await get_singleton(IngestService).ingest_event(source_id, body)
+
+    # Create root span for this ingestion event
+    with tracer.start_as_current_span("ingest_event") as span:
+        span.set_attribute("source", source)
+        span.set_attribute("event_type", body.get("event_type", "unknown"))
+
+        # Inject trace context into body for NATS propagation
+        traced_message = inject_trace_context(body)
+
+        logger.info("POST /ingest source=%s", source)
+        return await get_singleton(IngestService).ingest_event(source_id, traced_message)
 
 
 @router.post("/hydrate")

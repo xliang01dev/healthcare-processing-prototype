@@ -34,7 +34,7 @@ RUN if [ "$INCLUDE_DEBUG" = "debugpy" ]; then \
 fi
 
 # Expose app port
-ARG APP_PORT=8008
+ARG APP_PORT=8070
 ENV APP_PORT=$APP_PORT
 EXPOSE $APP_PORT
 

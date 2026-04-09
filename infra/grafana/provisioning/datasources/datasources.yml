@@ -13,3 +13,11 @@ datasources:
     access: proxy
     url: http://loki:3010
     editable: true
+
+  - name: Jaeger
+    type: jaeger
+    access: proxy
+    url: http://jaeger:16686
+    jsonData:
+      protocolVersion: "grpc"
+    editable: true

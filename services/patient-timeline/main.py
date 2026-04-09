@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 import faulthandler
 import logging
 import logging.config
+import json
 import os
 import yaml
 
@@ -11,6 +12,8 @@ from shared.message_bus import MessageBus
 from shared.singleton_store import get_singleton, register_singleton, remove_singleton
 from shared.metrics_router import create_metrics_router
 from shared.metrics_middleware import MetricsMiddleware
+from shared.opentelemetry_config import init_tracing, get_tracer
+from shared.trace_helpers import extract_trace_context
 from timeline_service import TimelineService
 from timeline_data_provider import TimelineDataProvider
 import internal_router as internal
@@ -21,6 +24,10 @@ _logging_config_file = os.getenv("LOG_CONFIG", "shared/custom-logging.yaml")
 with open(_logging_config_file) as f:
     logging.config.dictConfig(yaml.safe_load(f))
 logger = logging.getLogger(__name__)
+
+# Initialize OpenTelemetry tracing
+init_tracing("patient-timeline")
+tracer = get_tracer(__name__)
 
 _host, _port, _db = os.getenv("POSTGRES_HOST"), os.getenv("POSTGRES_PORT", "5432"), os.getenv("POSTGRES_DB")
 data_provider = TimelineDataProvider(
@@ -34,7 +41,13 @@ register_singleton(TimelineService, TimelineService(data_provider, bus))
 
 
 async def _handle_reconciled_event(msg):
-    await get_singleton(TimelineService).handle_reconciled_event(msg)
+    """Handle reconciled event with trace context propagation."""
+    payload = json.loads(msg.data.decode())
+    ctx = extract_trace_context(payload)
+
+    with tracer.start_as_current_span("handle_reconciled_event", context=ctx) as span:
+        span.set_attribute("event_type", payload.get("event_type"))
+        await get_singleton(TimelineService).handle_reconciled_event(payload)
 
 
 @asynccontextmanager
