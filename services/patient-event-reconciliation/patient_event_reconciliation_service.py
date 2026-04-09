@@ -1,12 +1,12 @@
 import json
-import logging
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from patient_event_reconciliation_data_provider import PatientEventReconciliationDataProvider
 from shared.message_bus import MessageBus
+from shared.json_logger import configure_json_logging
 
-logger = logging.getLogger(__name__)
+logger = configure_json_logging(__name__)
 
 
 class PatientEventReconciliationService:
@@ -60,6 +60,16 @@ class PatientEventReconciliationService:
                             conn=conn
                         )
                         # Publish reconciliation task to JetStream work queue
+                        logger.info(
+                            "Reconciliation task awaiting processing",
+                            extra={
+                                "task_id": str(uuid4()),
+                                "canonical_patient_id": canonical_patient_id,
+                                "start_event_log_id": pending_publish.first_event_log_id,
+                                "end_event_log_id": pending_publish.last_event_log_id,
+                                "action": "reconciled_awaiting_processing"
+                            }
+                        )
                         await self.bus.publish_stream(
                             topic="reconciliation.tasks",
                             payload={

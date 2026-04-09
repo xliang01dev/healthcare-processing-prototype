@@ -17,6 +17,7 @@ dependencies = [
     "opentelemetry-exporter-otlp>=0.44b0",
     "opentelemetry-instrumentation-fastapi>=0.44b0",
     "opentelemetry-instrumentation-httpx>=0.44b0",
+    "python-json-logger>=2.0",
 ]
 
 [project.optional-dependencies]

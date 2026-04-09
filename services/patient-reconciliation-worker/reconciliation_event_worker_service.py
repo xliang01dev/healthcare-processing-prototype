@@ -1,12 +1,12 @@
 import json
-import logging
 
 from reconciliation_event_worker_data_provider import ReconciliationEventWorkerDataProvider
 from patient_event_reconciliation_rules import PatientEventReconciliationRules
 from shared.message_bus import MessageBus
 from shared.event_models import ReconciliationTask
+from shared.json_logger import configure_json_logging
 
-logger = logging.getLogger(__name__)
+logger = configure_json_logging(__name__)
 
 
 class ReconciliationEventWorkerService:
@@ -22,7 +22,13 @@ class ReconciliationEventWorkerService:
 
     async def handle_reconciliation_task(self, payload: dict) -> None:
         """Process a reconciliation task: fetch event logs, reconcile, publish result."""
-        logger.info("handle_reconciliation_task: data=%s", payload)
+        logger.info(
+            "handle_reconciliation_task: received task_id=%s canonical_patient_id=%s start_event_log_id=%s end_event_log_id=%s",
+            payload.get("id"),
+            payload.get("canonical_patient_id"),
+            payload.get("start_event_log_id"),
+            payload.get("end_event_log_id")
+        )
         task = ReconciliationTask.model_validate(payload)
 
         # Fetch the event logs in this debounce window

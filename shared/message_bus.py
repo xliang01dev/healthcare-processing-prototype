@@ -4,6 +4,7 @@ import nats
 from typing import Any
 from nats.aio.client import Client as NATS
 from nats.js.api import ConsumerConfig, StreamConfig
+from shared.trace_helpers import inject_trace_context
 
 class MessageBus:
     """
@@ -30,7 +31,8 @@ class MessageBus:
     async def publish(self, topic: str, payload: dict) -> None:
         """Publish to NATS core pub/sub topic (fire-and-forget, no persistence)."""
         assert self._nc is not None, "MessageBus not connected — call connect() first"
-        await self._nc.publish(topic, json.dumps(payload).encode())
+        payload_with_trace = inject_trace_context(payload)
+        await self._nc.publish(topic, json.dumps(payload_with_trace).encode())
 
     async def publish_stream(self, topic: str, payload: dict) -> dict:
         """Publish to JetStream stream (durable, with sequence tracking).
@@ -39,7 +41,8 @@ class MessageBus:
         """
         assert self._nc is not None, "MessageBus not connected — call connect() first"
         js = self._nc.jetstream()
-        pub_ack = await js.publish(topic, json.dumps(payload).encode())
+        payload_with_trace = inject_trace_context(payload)
+        pub_ack = await js.publish(topic, json.dumps(payload_with_trace).encode())
         return {
             "stream": pub_ack.stream,
             "seq": pub_ack.seq
