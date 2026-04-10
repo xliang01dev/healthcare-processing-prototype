@@ -117,6 +117,16 @@ curl http://localhost:8000/health  # Patient API
 curl http://localhost:8222/jsz     # NATS metrics
 ```
 
+### Observability
+
+The prototype includes integrated observability across three dimensions:
+
+- **Distributed Tracing**: OpenTelemetry with Jaeger (http://localhost:3030) — correlates requests across service boundaries. Trace context propagated through NATS messages.
+- **Metrics**: Prometheus (http://localhost:3020) — tracks request latency, throughput, error rates by endpoint. Scraped from `/metrics` on each service.
+- **Structured Logging**: JSON logs aggregated in Loki (http://localhost:3010) via Grafana — queryable logs with canonical_patient_id, task_id, action, and payloads for reconciliation events.
+
+All three pipelines are enabled in docker-compose by default. Access dashboards via Grafana (http://localhost:3000, admin/admin).
+
 ---
 
 ## Architecture: Top 5 Scaling Decisions

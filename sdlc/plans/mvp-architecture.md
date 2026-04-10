@@ -323,3 +323,38 @@ Source Event → Ingestion → Event Log → Debounce → Reconcile → Resolved
 | **LLM Backend** | Ollama with configurable models (e.g., adrienbrault/biomistral-7b) | Flexible, runs locally (no cloud API). Swap in Anthropic API / LLaMA / LangGraph later. System prompt configurable. |
 | **Patient Data Formatting for LLM** | Natural language prose (PatientTimeline.to_agent_prompt()) | More readable for LLM than piped/structured format. Easier prompt engineering. |
 | **Single Postgres** | Per-service schemas, one DB instance | Sufficient for learning; production would use dedicated per-service DBs + read replicas |
+
+---
+
+## Observability: Tracing, Metrics, Logging
+
+The system integrates three observability pillars to provide complete visibility into request flow, system performance, and operational events.
+
+### Tracing (Distributed)
+
+**Purpose**: Correlate requests across service boundaries; trace execution flow from ingestion through reconciliation to timeline materialization.
+
+**Implementation**: OpenTelemetry with Jaeger exporter (`shared/opentelemetry_config.py`). Trace context injected into NATS messages via `inject_trace_context()` and extracted on message receipt via `extract_trace_context()` (in `shared/trace_helpers.py`). Each service creates spans for key operations (message processing, database queries, LLM calls).
+
+**Configuration**: JAEGER_HOST and JAEGER_PORT environment variables. Exporter configured at service startup in main.py.
+
+### Metrics (Prometheus)
+
+**Purpose**: Track request latency, throughput, error rates, and custom business metrics by endpoint and operation.
+
+**Implementation**: Prometheus client library with automatic HTTP metrics collection via `MetricsMiddleware` (in `shared/metrics_middleware.py`). Metrics recorded through `record_request()` function in `shared/metrics_router.py`. Endpoint paths normalized to avoid cardinality explosion (IDs replaced with `{id}` placeholder).
+
+**Configuration**: Prometheus scrapes /metrics endpoint. Service startup initializes metrics collection in main.py.
+
+### Logging (Structured JSON)
+
+**Purpose**: Capture operational events with structured context (canonical_patient_id, task_id, action, payload) for indexing and filtering in Loki.
+
+**Implementation**: JSON formatted logs via `pythonjsonlogger` library. Shared logging configuration in `shared/json_logger.py` provides `configure_json_logging()` utility for consistent JSON output across services. Each service uses this utility to initialize loggers.
+
+**Configuration**: Services call `configure_json_logging(__name__)` at module level. Loki configuration in `infra/loki/loki-config.yml` defines retention, chunking, and storage.
+
+### Integration
+
+Trace IDs in OpenTelemetry context are automatically included in logs when JSON logger writes; this correlation ID links distributed traces to log entries. Messages flowing through NATS carry trace context, enabling end-to-end request tracking. Metrics and logs together provide operational observability: metrics for performance trends, logs for event details and debugging.
+
