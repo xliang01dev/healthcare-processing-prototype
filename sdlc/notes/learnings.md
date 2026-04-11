@@ -440,9 +440,115 @@ service:
 
 ---
 
+### 24. Loki Single-Instance Configuration: Distributed Ring Overhead
+**Mistake:** Attempted to use Loki's distributed ring configuration (suitable for multi-instance clustering) in single-instance MVP setup.
+
+**What went wrong (debugging sequence):**
+1. Started with distributed ring config for Jaeger compatibility
+2. Error: "instance_addr must be 127.0.0.1 or resolvable hostname"
+   - Tried `instance_addr: 127.0.0.1` — worked locally but doesn't work in Docker (localhost is container-local)
+   - Fixed: `instance_addr: 0.0.0.0` (bind to all interfaces)
+3. Error: tsdb schema validation errors about missing path_prefix
+   - Tried adding `path_prefix: /loki` to common section
+   - Fixed: Also needed proper storage_config structure
+4. Error: WAL "mkdir /var/loki: permission denied"
+   - Cause: WAL writes to /var/loki instead of mounted /loki volume
+   - Fixed: Disabled WAL with `wal.enabled: false` (MVP doesn't need durability)
+5. Error: Compactor "mkdir /var/loki: permission denied"
+   - Cause: Default compactor working_directory was /var/loki
+   - Fixed: Set `compactor.working_directory: /loki/compactor`
+6. Error: "Too many unhealthy instances in the ring"
+   - Cause: Ring configuration expected multiple instances, but only one exists
+   - Fixed: Added `replication_factor: 1` and `num_tokens: 128` to ingester, added distributor ring with in-memory kvstore
+
+**Root cause:** Distributed ring is designed for multi-instance Loki clusters (each instance announces itself, discovers peers, coordinates across replicas). Single-instance setup doesn't need:
+- Instance discovery (there's only one)
+- Replication factors (no replicas)
+- Complex ring coordination (everything is local)
+
+**Correct minimal config for single-instance:**
+```yaml
+auth_enabled: false
+
+ingester:
+  chunk_idle_period: 3m
+  chunk_retain_period: 1m
+  max_chunk_age: 1h
+  chunk_encoding: snappy
+  wal:
+    enabled: false  # MVP doesn't need durability
+  lifecycler:
+    ring:
+      kvstore:
+        store: inmemory  # No peer discovery needed
+      replication_factor: 1  # Single instance
+    num_tokens: 128  # Minimal token distribution
+
+limits_config:
+  retention_period: 24h
+  allow_structured_metadata: false
+
+schema_config:
+  configs:
+    - from: 2020-10-24
+      store: boltdb-shipper
+      object_store: filesystem
+      schema: v11
+      index:
+        prefix: index_
+        period: 24h
+
+storage_config:
+  boltdb_shipper:
+    active_index_directory: /loki/boltdb-shipper-active
+    cache_location: /loki/boltdb-shipper-cache
+  filesystem:
+    directory: /loki/chunks
+
+distributor:
+  ring:
+    kvstore:
+      store: inmemory  # Single instance, no coordination needed
+
+compactor:
+  working_directory: /loki/compactor  # Must use mounted volume, not /var/loki
+  compaction_interval: 10m
+
+server:
+  http_listen_port: 3010
+  log_level: error
+```
+
+**Debugging approach that worked:**
+1. **Isolate one error at a time** — Don't try to fix 5 errors simultaneously. Address the first error, verify startup, then tackle the next.
+2. **Check docker-compose logs** — `docker-compose logs loki | tail -50` shows which config line is actually failing.
+3. **Understand each section's purpose** — Know why each config block exists:
+   - `ingester.wal` → Durable write-ahead log (disable for MVP)
+   - `ingester.lifecycler.ring` → Peer discovery and coordination (simplify for single instance)
+   - `compactor.working_directory` → Where to write temp files (must be on mounted volume)
+   - `storage_config` → Where to store actual log chunks and indexes
+4. **Progressive simplification** — Start with minimal config, add only what's needed. Don't copy distributed cluster configs for single-instance.
+5. **Docker volume permissions** — When config references a path like `/loki`, ensure:
+   - Path exists on host and is mounted in compose as `volumes: ["-./loki:/loki"]`
+   - Container user (loki UID) has write permissions
+   - Don't try to write to /var without explicit `volumes` mount
+
+**Lesson:** Infrastructure software like Loki ships with example configs for *enterprise distributed setups*. For MVP/single-instance, strip down to the minimum:
+- No HA/replication needed → disable WAL, set replication_factor: 1
+- No peer discovery → use inmemory kvstore, not consul/memberlist
+- No complex state → disable features that add coordination overhead
+
+**How to avoid:** When configuring any distributed system for single-instance:
+1. Find "single-instance" or "standalone" example config (not the default enterprise config)
+2. Understand which sections are for HA/clustering (remove them)
+3. Check that all paths in config are on mounted volumes, not system paths (/var)
+4. Test each section: start service, verify health endpoint, read logs for initialization errors
+
+---
+
 ## How to Avoid These Issues in the Future
 
-### Observability Stack (Issues 18-22)
+### Observability Stack (Issues 18-24)
 
 **Preventative measures that would have saved 2+ hours:**
 
@@ -480,6 +586,14 @@ service:
    - Include minimal working config for each
    - **Action:** Update this doc every time you upgrade a service version
 
+7. **For single-instance infrastructure services (Loki, etc):**
+   - Never copy enterprise/distributed example configs — they add HA overhead you don't need
+   - Find the "standalone" or "single-instance" example config from official docs
+   - Remove all HA/clustering sections: WAL (disable), replication_factor (set to 1), peer discovery (use inmemory kvstore)
+   - Verify all config paths are on mounted volumes (`/loki`, `/prometheus`, etc), not system paths (`/var`)
+   - Test incrementally: fix one error at a time, verify health endpoint between changes
+   - **Action:** Read the single-instance setup guide for each new infrastructure service before writing config
+
 ---
 
 ## Takeaways for Future Decisions
@@ -505,3 +619,5 @@ service:
 19. **Jaeger v1→v2 is architectural, not incremental** — v2 is OpenTelemetry Collector-based. No backward compat on config or CLI flags. Plan for complete rewrite.
 20. **Configure logging per-service** — Don't suppress all logs. Use service-specific log level config (Prometheus: `--log.level`, Loki: `server.log_level`, Jaeger: YAML) to reduce noise while preserving visibility.
 21. **Don't strip config to "simplify" troubleshooting** — Default configurations often have security constraints (localhost-only binding). When config is complex, fix it incrementally; don't remove it. Removing config to debug often hides the actual problem (network binding, not config syntax).
+22. **Single-instance infrastructure doesn't need distributed features** — Loki, Cassandra, etc. ship with enterprise cluster configs by default. For MVP/single-instance: disable WAL, set replication_factor=1, use inmemory kvstore for ring, remove peer discovery. Strip to minimum; don't copy enterprise configs.
+23. **Debug infrastructure config errors incrementally** — When config has 5+ errors, fix the first one, verify service health, then tackle the next. Don't try to fix all at once. Use `docker-compose logs service_name` to see which line is actually failing. Understand what each config section does (WAL, ring, compactor) before tweaking it.
